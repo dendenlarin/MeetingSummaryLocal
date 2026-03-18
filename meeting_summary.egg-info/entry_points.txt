@@ -1,2 +1,0 @@
-[console_scripts]
-meeting-summary = meeting_summary.main:main
