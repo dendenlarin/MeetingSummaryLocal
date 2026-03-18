@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from meeting_summary.diarization import (
     PyannoteDiarizer,
     SpeakerTurn,
+    _load_audio,
     _load_pipeline,
     assign_speakers,
 )
@@ -147,6 +149,49 @@ class DiarizationTests(unittest.TestCase):
         )
 
         self.assertEqual(pipeline, ("pyannote/speaker-diarization-community-1", "hf_test"))
+
+    def test_load_audio_uses_torchaudio_when_available(self) -> None:
+        expected_waveform = object()
+        fake_torchaudio = SimpleNamespace(load=lambda _: (expected_waveform, 44100))
+
+        with patch.dict("sys.modules", {"torchaudio": fake_torchaudio, "torch": SimpleNamespace()}):
+            audio = _load_audio(Path("demo.wav"))
+
+        self.assertIs(audio["waveform"], expected_waveform)
+        self.assertEqual(audio["sample_rate"], 44100)
+
+    def test_load_audio_falls_back_to_faster_whisper_decode(self) -> None:
+        fake_tensor = object()
+
+        class _FakeTorch:
+            @staticmethod
+            def from_numpy(value):  # noqa: ANN001
+                class _Tensor:
+                    def __init__(self, payload):  # noqa: ANN001
+                        self.payload = payload
+
+                    def unsqueeze(self, dim):  # noqa: ANN001
+                        return fake_tensor if dim == 0 else None
+
+                return _Tensor(value)
+
+        fake_torchaudio = SimpleNamespace(
+            load=lambda _: (_ for _ in ()).throw(RuntimeError("Format not recognised"))
+        )
+        fake_audio_module = SimpleNamespace(decode_audio=lambda _, sampling_rate=16000: ["pcm"])
+
+        with patch.dict(
+            "sys.modules",
+            {
+                "torchaudio": fake_torchaudio,
+                "torch": _FakeTorch(),
+                "faster_whisper.audio": fake_audio_module,
+            },
+        ):
+            audio = _load_audio(Path("demo.m4a"))
+
+        self.assertIs(audio["waveform"], fake_tensor)
+        self.assertEqual(audio["sample_rate"], 16000)
 
 
 if __name__ == "__main__":

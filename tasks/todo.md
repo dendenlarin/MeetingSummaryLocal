@@ -46,6 +46,21 @@
 - [x] Обновить README и добавить review-итог
 - [x] Прогнать релевантные тесты
 
+## 2026-03-18 Починка загрузки `.m4a` для diarization
+
+- [x] Подтвердить причину fallback по логам и коду загрузки аудио
+- [x] Добавить fallback-декодирование аудио для pyannote, если `torchaudio.load` не читает контейнер
+- [x] Добавить unit-тесты на новый путь загрузки
+- [x] Прогнать релевантные тесты и при возможности проверить в контейнере
+
+## 2026-03-18 Fix review regressions in prompt-file handling
+
+- [x] Убрать интерпретацию произвольных `{}` в пользовательском prompt как Python format fields
+- [x] Привязать относительный `OLLAMA_PROMPT_PATH` к `base_dir`, а не к process `cwd`
+- [x] Добавить регрессионные тесты на literal braces и относительный prompt path
+- [x] Обновить README и review-итог
+- [x] Прогнать релевантные тесты
+
 # Review
 
 - Для hot-reload добавлен явный путь `OLLAMA_PROMPT_PATH`, prompt теперь читается из файла при каждом новом summary.
@@ -66,4 +81,16 @@
 - `Settings.load()` теперь берёт дефолтный prompt из package resource `meeting_summary/prompts/summary.md`, поэтому запуск из установленного пакета не зависит от текущей рабочей директории.
 - Пустые значения `ENABLE_DIARIZATION=` и `INITIAL_SCAN=` теперь трактуются как выключенные, без ложного включения функциональности из-за пустого env.
 - Проверено: `.venv/bin/python -m unittest tests.test_config tests.test_ollama_client tests.test_diarization -v`
+- Проверено: `.venv/bin/python -m unittest discover -s tests -v`
+- Причина падения diarization на `.m4a` была в том, что `pyannote` грузил аудио через `torchaudio.load`, а этот backend в контейнере не читает текущий контейнер/кодек, хотя `faster-whisper` читает тот же файл нормально.
+- Для загрузки аудио в diarization добавлен fallback на `faster_whisper.audio.decode_audio`, который декодирует файл через PyAV/FFmpeg и отдаёт waveform в формате, подходящем для `pyannote`.
+- Добавлены unit-тесты на оба сценария: успешный `torchaudio.load` и fallback после ошибки `Format not recognised`.
+- Проверено: `.venv/bin/python -m unittest discover -s tests -v`
+- Проверено: `docker-compose up --build -d`
+- Проверено: `docker-compose ps`
+- Проверено: `docker-compose logs --tail=120 meeting-summary`
+- Prompt-шаблон больше не прогоняется через `str.format`, поэтому literal `{}` в редактируемом `.md` не ломают генерацию summary; подставляются только `{language}`, `{duration_seconds}` и `{transcript_block}`.
+- `OLLAMA_PROMPT_PATH` теперь резолвится относительно `base_dir`, если задан относительным путём, что выравнивает его поведение с `CALLS_DIR` и сценариями `Settings.load(base_dir=...)`.
+- Добавлены регрессионные тесты на literal braces в prompt и на относительный `OLLAMA_PROMPT_PATH`.
+- Проверено: `.venv/bin/python -m unittest tests.test_config tests.test_ollama_client -v`
 - Проверено: `.venv/bin/python -m unittest discover -s tests -v`

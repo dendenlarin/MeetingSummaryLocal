@@ -160,18 +160,41 @@ class OllamaClientTests(unittest.TestCase):
         self.assertIn("Write in Russian.", first_prompt)
         self.assertIn("UPDATED", second_prompt)
 
-    def test_invalid_prompt_template_placeholder_raises_clear_error(self) -> None:
-        self.prompt_path.write_text("Broken {missing_key}\n", encoding="utf-8")
+    def test_prompt_keeps_literal_braces_without_failing(self) -> None:
+        self.prompt_path.write_text(
+            'Schema example: {"speaker": "Speaker 1"}\n{transcript_block}\n',
+            encoding="utf-8",
+        )
         client = OllamaClient(
             base_url="http://localhost:11434",
             model="llama3.1:8b",
             prompt_path=self.prompt_path,
         )
 
-        with self.assertRaises(OllamaError) as error:
-            client._build_prompt(self.transcription)
+        prompt = client._build_prompt(self.transcription)
 
-        self.assertIn("unknown placeholder", str(error.exception))
+        self.assertIn('{"speaker": "Speaker 1"}', prompt)
+        self.assertIn("Transcript:\nТестовая расшифровка", prompt)
+
+    def test_prompt_replaces_supported_tokens_and_keeps_other_braces(self) -> None:
+        self.prompt_path.write_text(
+            "Language: {language}\n"
+            "JSON example: {\"key\": \"value\"}\n"
+            "Unknown token stays: {missing_key}\n"
+            "{transcript_block}\n",
+            encoding="utf-8",
+        )
+        client = OllamaClient(
+            base_url="http://localhost:11434",
+            model="llama3.1:8b",
+            prompt_path=self.prompt_path,
+        )
+
+        prompt = client._build_prompt(self.transcription)
+
+        self.assertIn("Language: ru", prompt)
+        self.assertIn('JSON example: {"key": "value"}', prompt)
+        self.assertIn("Unknown token stays: {missing_key}", prompt)
 
 
 if __name__ == "__main__":
