@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from inspect import signature
 import logging
 from pathlib import Path
+from typing import Any
 
 from meeting_summary.models import TranscriptUtterance
 
@@ -102,15 +104,16 @@ class PyannoteDiarizer:
     ) -> None:
         from pyannote.audio import Pipeline
 
-        self.pipeline = Pipeline.from_pretrained(
-            model_name,
-            use_auth_token=auth_token or None,
+        self.pipeline = _load_pipeline(
+            pipeline_cls=Pipeline,
+            model_name=model_name,
+            auth_token=auth_token,
         )
         self._move_pipeline_to_device(device)
         LOGGER.info("Loaded pyannote diarization pipeline '%s'.", model_name)
 
     def diarize(self, audio_path: Path) -> list[SpeakerTurn]:
-        annotation = self.pipeline(str(audio_path))
+        annotation = _resolve_annotation(self.pipeline(_load_audio(audio_path)))
         speaker_turns: list[SpeakerTurn] = []
         for segment, _, speaker in annotation.itertracks(yield_label=True):
             speaker_turns.append(
@@ -132,3 +135,37 @@ class PyannoteDiarizer:
 
         self.pipeline.to(torch.device(target_device))
         LOGGER.info("Using pyannote device=%s.", target_device)
+
+
+def _load_audio(audio_path: Path) -> dict[str, Any]:
+    import torchaudio
+
+    waveform, sample_rate = torchaudio.load(str(audio_path))
+    return {
+        "waveform": waveform,
+        "sample_rate": sample_rate,
+    }
+
+
+def _resolve_annotation(output: Any) -> Any:
+    annotation = getattr(output, "exclusive_speaker_diarization", None)
+    if annotation is not None:
+        return annotation
+
+    annotation = getattr(output, "speaker_diarization", None)
+    if annotation is not None:
+        return annotation
+
+    return output
+
+
+def _load_pipeline(pipeline_cls: Any, model_name: str, auth_token: str | None) -> Any:
+    parameters = signature(pipeline_cls.from_pretrained).parameters
+    kwargs: dict[str, Any] = {}
+
+    if "token" in parameters:
+        kwargs["token"] = auth_token or None
+    elif "use_auth_token" in parameters:
+        kwargs["use_auth_token"] = auth_token or None
+
+    return pipeline_cls.from_pretrained(model_name, **kwargs)

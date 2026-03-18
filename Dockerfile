@@ -10,10 +10,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml README.md ./
+COPY constraints-docker.txt pyproject.toml README.md ./
 COPY meeting_summary ./meeting_summary
 
-RUN pip install .
+RUN pip install --constraint constraints-docker.txt .
 
 CMD ["meeting-summary"]
-
