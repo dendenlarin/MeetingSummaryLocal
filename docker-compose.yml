@@ -1,0 +1,22 @@
+services:
+  meeting-summary:
+    build:
+      context: .
+    container_name: meeting-summary
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      CALLS_DIR: /app/calls
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      WHISPER_DEVICE: cpu
+      WHISPER_COMPUTE_TYPE: int8
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./calls:/app/calls
+      - whisper_cache:/root/.cache/huggingface
+
+volumes:
+  whisper_cache:
+
