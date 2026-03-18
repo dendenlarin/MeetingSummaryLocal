@@ -128,7 +128,7 @@ INITIAL_SCAN=true
   адрес локального API `ollama`
 - `OLLAMA_PROMPT_PATH`:
   путь до markdown-шаблона prompt для `ollama`; файл перечитывается при каждом новом summary
-- по умолчанию prompt лежит в `meeting_summary/prompts/summary.md`
+- если переменная не задана, используется встроенный prompt из ресурсов пакета `meeting_summary/prompts/summary.md`
 - `WHISPER_MODEL_SIZE`:
   размер модели `faster-whisper`, например `small` или `medium`
 - `WHISPER_DEVICE`:
@@ -137,6 +137,7 @@ INITIAL_SCAN=true
   режим вычислений, например `default` или `int8`
 - `ENABLE_DIARIZATION`:
   включает speaker diarization через `pyannote`
+- пустое значение трактуется как `false`
 - `HF_TOKEN`:
   токен Hugging Face для первой загрузки модели diarization; если модель уже закеширована локально, может не понадобиться
 - `PYANNOTE_DEVICE`:
