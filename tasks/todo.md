@@ -53,6 +53,14 @@
 - [x] Добавить unit-тесты на новый путь загрузки
 - [x] Прогнать релевантные тесты и при возможности проверить в контейнере
 
+## 2026-03-18 Fix review regressions in prompt-file handling
+
+- [x] Убрать интерпретацию произвольных `{}` в пользовательском prompt как Python format fields
+- [x] Привязать относительный `OLLAMA_PROMPT_PATH` к `base_dir`, а не к process `cwd`
+- [x] Добавить регрессионные тесты на literal braces и относительный prompt path
+- [x] Обновить README и review-итог
+- [x] Прогнать релевантные тесты
+
 # Review
 
 - Для hot-reload добавлен явный путь `OLLAMA_PROMPT_PATH`, prompt теперь читается из файла при каждом новом summary.
@@ -81,3 +89,8 @@
 - Проверено: `docker-compose up --build -d`
 - Проверено: `docker-compose ps`
 - Проверено: `docker-compose logs --tail=120 meeting-summary`
+- Prompt-шаблон больше не прогоняется через `str.format`, поэтому literal `{}` в редактируемом `.md` не ломают генерацию summary; подставляются только `{language}`, `{duration_seconds}` и `{transcript_block}`.
+- `OLLAMA_PROMPT_PATH` теперь резолвится относительно `base_dir`, если задан относительным путём, что выравнивает его поведение с `CALLS_DIR` и сценариями `Settings.load(base_dir=...)`.
+- Добавлены регрессионные тесты на literal braces в prompt и на относительный `OLLAMA_PROMPT_PATH`.
+- Проверено: `.venv/bin/python -m unittest tests.test_config tests.test_ollama_client -v`
+- Проверено: `.venv/bin/python -m unittest discover -s tests -v`

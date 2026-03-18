@@ -129,6 +129,8 @@ INITIAL_SCAN=true
 - `OLLAMA_PROMPT_PATH`:
   путь до markdown-шаблона prompt для `ollama`; файл перечитывается при каждом новом summary
 - если переменная не задана, используется встроенный prompt из ресурсов пакета `meeting_summary/prompts/summary.md`
+- если путь относительный, он резолвится относительно директории загрузки конфигурации (`base_dir` / текущая директория запуска)
+- в шаблоне подставляются только `{language}`, `{duration_seconds}` и `{transcript_block}`; остальные `{}` остаются обычным текстом
 - `WHISPER_MODEL_SIZE`:
   размер модели `faster-whisper`, например `small` или `medium`
 - `WHISPER_DEVICE`:

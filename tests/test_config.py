@@ -42,6 +42,21 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.ollama_prompt_path, custom_prompt_path.resolve())
 
+    def test_load_resolves_relative_prompt_override_from_base_dir(self) -> None:
+        prompts_dir = self.base_dir / "prompts"
+        prompts_dir.mkdir()
+        custom_prompt_path = prompts_dir / "summary.md"
+        custom_prompt_path.write_text("CUSTOM\n", encoding="utf-8")
+
+        with patch.dict(
+            os.environ,
+            {"OLLAMA_PROMPT_PATH": "./prompts/summary.md"},
+            clear=True,
+        ):
+            settings = Settings.load(base_dir=self.base_dir)
+
+        self.assertEqual(settings.ollama_prompt_path, custom_prompt_path.resolve())
+
     def test_empty_enable_diarization_is_treated_as_disabled(self) -> None:
         with patch.dict(os.environ, {"ENABLE_DIARIZATION": ""}, clear=True):
             settings = Settings.load(base_dir=self.base_dir)

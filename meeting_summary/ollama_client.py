@@ -10,6 +10,12 @@ from meeting_summary.models import CallSummary, TranscriptUtterance, Transcripti
 
 LOGGER = logging.getLogger(__name__)
 
+PROMPT_PLACEHOLDERS = (
+    "language",
+    "duration_seconds",
+    "transcript_block",
+)
+
 
 class OllamaError(RuntimeError):
     """Raised when Ollama fails to produce a summary."""
@@ -147,16 +153,16 @@ class OllamaClient:
                 f"Failed to read Ollama prompt template from {self.prompt_path}: {exc}"
             ) from exc
 
-        try:
-            return template.format(
-                language=transcription.language or "unknown",
-                duration_seconds=transcription.duration_seconds or "unknown",
-                transcript_block=transcript_block,
-            )
-        except KeyError as exc:
-            raise OllamaError(
-                f"Ollama prompt template {self.prompt_path} uses unknown placeholder: {exc.args[0]}"
-            ) from exc
+        values = {
+            "language": transcription.language or "unknown",
+            "duration_seconds": transcription.duration_seconds or "unknown",
+            "transcript_block": transcript_block,
+        }
+
+        for placeholder in PROMPT_PLACEHOLDERS:
+            template = template.replace(f"{{{placeholder}}}", str(values[placeholder]))
+
+        return template
 
     def _build_transcript_block(self, transcription: TranscriptionResult) -> str:
         if any(utterance.speaker for utterance in transcription.utterances):
