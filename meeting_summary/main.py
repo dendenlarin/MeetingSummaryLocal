@@ -19,10 +19,14 @@ def main() -> None:
         model_size=settings.whisper_model_size,
         device=settings.whisper_device,
         compute_type=settings.whisper_compute_type,
+        enable_diarization=settings.enable_diarization,
+        diarization_auth_token=settings.hf_token,
+        diarization_device=settings.pyannote_device,
     )
     ollama_client = OllamaClient(
         base_url=settings.ollama_base_url,
         model=settings.ollama_model,
+        prompt_path=settings.ollama_prompt_path,
     )
     processor = CallProcessor(
         transcriber=transcriber,
@@ -43,4 +47,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

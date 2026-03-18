@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import requests
 
-from meeting_summary.models import CallSummary, TranscriptionResult
+from meeting_summary.models import CallSummary, TranscriptUtterance, TranscriptionResult
 
 LOGGER = logging.getLogger(__name__)
 
@@ -15,9 +16,16 @@ class OllamaError(RuntimeError):
 
 
 class OllamaClient:
-    def __init__(self, base_url: str, model: str, timeout_seconds: int = 300) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        prompt_path: Path | str,
+        timeout_seconds: int = 300,
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model.strip() or "auto"
+        self.prompt_path = Path(prompt_path)
         self.timeout_seconds = timeout_seconds
 
     def summarize(self, transcription: TranscriptionResult) -> CallSummary:
@@ -131,17 +139,37 @@ class OllamaClient:
         return "not found" in error_message.lower()
 
     def _build_prompt(self, transcription: TranscriptionResult) -> str:
-        return (
-            "You summarize phone calls into concise markdown.\n"
-            "Return only markdown content, no code fences.\n"
-            "Write in Russian.\n"
-            "Use these sections when relevant:\n"
-            "## Кратко\n"
-            "## Договоренности\n"
-            "## Следующие шаги\n"
-            "## Риски и открытые вопросы\n\n"
-            f"Detected language: {transcription.language or 'unknown'}\n"
-            f"Duration seconds: {transcription.duration_seconds or 'unknown'}\n\n"
-            "Transcript:\n"
-            f"{transcription.transcript}\n"
+        transcript_block = self._build_transcript_block(transcription)
+        try:
+            template = self.prompt_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise OllamaError(
+                f"Failed to read Ollama prompt template from {self.prompt_path}: {exc}"
+            ) from exc
+
+        try:
+            return template.format(
+                language=transcription.language or "unknown",
+                duration_seconds=transcription.duration_seconds or "unknown",
+                transcript_block=transcript_block,
+            )
+        except KeyError as exc:
+            raise OllamaError(
+                f"Ollama prompt template {self.prompt_path} uses unknown placeholder: {exc.args[0]}"
+            ) from exc
+
+    def _build_transcript_block(self, transcription: TranscriptionResult) -> str:
+        if any(utterance.speaker for utterance in transcription.utterances):
+            return (
+                "Transcript with speaker labels:\n"
+                f"{self._format_utterances(transcription.utterances)}"
+            )
+
+        return f"Transcript:\n{transcription.transcript}"
+
+    @staticmethod
+    def _format_utterances(utterances: list[TranscriptUtterance]) -> str:
+        return "\n".join(
+            f"{utterance.speaker or 'Speaker ?'}: {utterance.text}"
+            for utterance in utterances
         )
