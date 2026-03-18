@@ -1,10 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path
 import os
 
 from dotenv import load_dotenv
+
+
+_FALSE_ENV_VALUES = {"", "0", "false", "no"}
+
+
+def _default_ollama_prompt_path() -> Path:
+    return Path(str(files("meeting_summary.prompts").joinpath("summary.md"))).resolve()
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+
+    return raw_value.strip().lower() not in _FALSE_ENV_VALUES
 
 
 @dataclass(slots=True)
@@ -35,20 +51,18 @@ class Settings:
             ollama_prompt_path=Path(
                 os.getenv(
                     "OLLAMA_PROMPT_PATH",
-                    str(root / "meeting_summary" / "prompts" / "summary.md"),
+                    str(_default_ollama_prompt_path()),
                 )
             ).resolve(),
             whisper_model_size=os.getenv("WHISPER_MODEL_SIZE", "small"),
             whisper_device=os.getenv("WHISPER_DEVICE", "auto"),
             whisper_compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "default"),
-            enable_diarization=(
-                os.getenv("ENABLE_DIARIZATION", "false").lower() not in {"0", "false", "no"}
-            ),
+            enable_diarization=_env_flag("ENABLE_DIARIZATION", default=False),
             hf_token=os.getenv("HF_TOKEN") or None,
             pyannote_device=os.getenv("PYANNOTE_DEVICE", "auto"),
             file_ready_checks=int(os.getenv("FILE_READY_CHECKS", "3")),
             file_ready_interval_seconds=float(
                 os.getenv("FILE_READY_INTERVAL_SECONDS", "2")
             ),
-            initial_scan=os.getenv("INITIAL_SCAN", "true").lower() not in {"0", "false", "no"},
+            initial_scan=_env_flag("INITIAL_SCAN", default=True),
         )
