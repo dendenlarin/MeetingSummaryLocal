@@ -43,7 +43,7 @@ calls/demo.md
 - локально запущенный `ollama`
 - хотя бы одна доступная модель в `ollama`
 - достаточно CPU или GPU для запуска `faster-whisper`
-- для diarization: модель `pyannote` и, как правило, токен Hugging Face для первой загрузки
+- для diarization: optional extra `.[diarization]`, модель `pyannote` и, как правило, токен Hugging Face для первой загрузки
 
 `faster-whisper` работает полностью локально и бесплатно, без обращения к API OpenAI. Для русскоязычных звонков quality-default в этом проекте это `large-v3`: это мультиязычная модель, в отличие от `distil-large-v3`, который не подходит как default для русского контура.
 
@@ -79,6 +79,12 @@ meeting-summary
 
 После запуска просто положите `.m4a` в папку `calls/`.
 
+Если нужен speaker diarization, установите optional extra:
+
+```bash
+pip install -e .[diarization]
+```
+
 ### Docker
 
 Если `ollama` уже запущена на хост-машине, можно поднять только контейнер приложения:
@@ -100,8 +106,8 @@ docker compose down
 - `OLLAMA_BASE_URL=http://host.docker.internal:11434`
 - `OLLAMA_PROMPT_PATH=/app/runtime-prompts/summary.md`
 
-Папка `./calls` и файл `./meeting_summary/prompts/summary.md` монтируются в контейнер, а кэши `whisper` и `huggingface` сохраняются в docker volume.
-Это значит, что prompt можно менять на хосте без пересборки образа и без рестарта сервиса: следующий summary возьмёт уже новую версию файла.
+Папки `./calls` и `./meeting_summary/prompts` монтируются в контейнер, а кэши `whisper` и `huggingface` сохраняются в docker volume.
+Это значит, что prompt можно менять на хосте без пересборки образа и без рестарта сервиса: следующий summary возьмёт уже новую версию файла даже при atomic save в VS Code, IntelliJ и похожих редакторах.
 
 ## Конфигурация
 
@@ -215,6 +221,10 @@ INITIAL_SCAN=true
 
 По умолчанию diarization выключен. Чтобы включить определение спикеров:
 
+```bash
+pip install -e .[diarization]
+```
+
 ```dotenv
 ENABLE_DIARIZATION=true
 HF_TOKEN=hf_...
@@ -228,6 +238,7 @@ PYANNOTE_DEVICE=auto
 - создать `HF_TOKEN` с правами чтения
 
 После первой успешной загрузки модель остаётся в локальном кэше, поэтому на той же машине diarization обычно может работать оффлайн.
+Если `ENABLE_DIARIZATION=true`, но optional extra не установлен или `pyannote` не инициализировался, сервис продолжит обработку файла без спикеров и запишет warning в лог.
 
 После этого раздел `## Transcript` будет выглядеть примерно так:
 

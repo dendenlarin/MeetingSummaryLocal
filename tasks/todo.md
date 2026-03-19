@@ -1,5 +1,13 @@
 # TODO
 
+## 2026-03-19 Исправить регрессии prompt hot-reload и optional diarization
+
+- [x] Перевести Docker mount prompt с одного файла на каталог `meeting_summary/prompts`, сохранив `OLLAMA_PROMPT_PATH`
+- [x] Вынести `pyannote.audio` из базовых зависимостей в optional extra для diarization
+- [x] Убрать import-time зависимость `Transcriber` от diarization-стека и сохранить fail-soft fallback
+- [x] Обновить README и добавить регрессионные тесты на packaging/runtime поведение
+- [x] Прогнать compile и релевантные unit-тесты, затем дописать review-итог в этот TODO
+
 ## 2026-03-19 Исправить ошибочный English-only default model
 
 - [x] Подтвердить по логам и конфигу, что контейнер реально грузит `distil-large-v3` при `language=ru`
@@ -199,3 +207,9 @@
 - Проверено: `.venv/bin/python -m unittest discover -s tests -v`
 - Проверено: `docker-compose up --build -d`
 - Проверено: `docker-compose ps`
+- Docker hot-reload prompt исправлен на mount каталога `meeting_summary/prompts`, поэтому atomic save в VS Code/JetBrains больше не оставляет контейнер на старом inode.
+- `pyannote.audio` вынесен в optional extra `.[diarization]`; базовая установка больше не тянет Torch-стек, а `Transcriber` не импортирует diarization-код до фактического включения функции.
+- Для сценария `ENABLE_DIARIZATION=true` без установленного extra сохранен fail-soft путь: сервис пишет понятный warning и продолжает обработку без speaker labels.
+- Добавлены регрессионные тесты на `docker-compose.yml`, `pyproject.toml` и lazy diarization initialization.
+- Проверено: `python3 -m compileall meeting_summary tests`
+- Проверено: `.venv/bin/python -m unittest discover -s tests -v`

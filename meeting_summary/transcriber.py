@@ -2,13 +2,23 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
-from meeting_summary.diarization import DiarizationSkipped, PyannoteDiarizer, assign_speakers
 from meeting_summary.models import TranscriptUtterance, TranscriptionResult
 
 LOGGER = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, int, str], None]
+
+
+class _Diarizer(Protocol):
+    def diarize(self, audio_path: Path) -> list[object]:
+        ...
+
+
+AssignSpeakersCallback = Callable[
+    [list[TranscriptUtterance], list[object]],
+    list[TranscriptUtterance],
+]
 
 
 class Transcriber:
@@ -56,14 +66,33 @@ class Transcriber:
             self.vad_filter,
             len(self.terms),
         )
-        self.diarizer: PyannoteDiarizer | None = None
+        self.diarizer: _Diarizer | None = None
+        self._assign_speakers: AssignSpeakersCallback | None = None
+        self._diarization_skipped_error: type[Exception] | None = None
+        self._diarization_unavailable_message = "Diarization disabled."
         if enable_diarization:
             try:
-                self.diarizer = PyannoteDiarizer(
+                (
+                    self.diarizer,
+                    self._assign_speakers,
+                    self._diarization_skipped_error,
+                ) = _create_diarization_support(
                     auth_token=diarization_auth_token,
                     device=diarization_device,
                 )
+            except ModuleNotFoundError as exc:
+                self._diarization_unavailable_message = (
+                    "Diarization unavailable; optional dependencies are not installed."
+                )
+                LOGGER.warning(
+                    "Diarization is enabled but optional dependencies are missing (%s). "
+                    "Install them with `pip install -e .[diarization]`. Falling back to plain transcript mode.",
+                    exc.name or str(exc),
+                )
             except Exception:
+                self._diarization_unavailable_message = (
+                    "Diarization unavailable; continuing without speaker labels."
+                )
                 LOGGER.warning(
                     "Failed to initialize pyannote diarization. Falling back to plain transcript mode.",
                     exc_info=True,
@@ -88,7 +117,11 @@ class Transcriber:
             f"Collected {len(utterances)} transcript segments.",
         )
 
-        if self.diarizer is not None:
+        if (
+            self.diarizer is not None
+            and self._assign_speakers is not None
+            and self._diarization_skipped_error is not None
+        ):
             _report_progress(
                 progress_callback,
                 "diarizing",
@@ -97,7 +130,7 @@ class Transcriber:
             )
             try:
                 speaker_turns = self.diarizer.diarize(audio_path)
-                utterances = assign_speakers(utterances, speaker_turns)
+                utterances = self._assign_speakers(utterances, speaker_turns)
                 speaker_count = len({turn.speaker for turn in speaker_turns})
                 _report_progress(
                     progress_callback,
@@ -105,7 +138,7 @@ class Transcriber:
                     75,
                     f"Diarization finished with {speaker_count} speakers.",
                 )
-            except DiarizationSkipped as exc:
+            except self._diarization_skipped_error as exc:
                 LOGGER.info("Skipping diarization for %s: %s", audio_path.name, exc)
                 _report_progress(
                     progress_callback,
@@ -130,7 +163,7 @@ class Transcriber:
                 progress_callback,
                 "diarization_skipped",
                 75,
-                "Diarization disabled.",
+                self._diarization_unavailable_message,
             )
 
         transcript = " ".join(utterance.text for utterance in utterances if utterance.text.strip())
@@ -222,6 +255,23 @@ def _resolve_initial_prompt(initial_prompt: str | None, terms: tuple[str, ...]) 
         return None
 
     return ", ".join(terms)
+
+
+def _create_diarization_support(
+    auth_token: str | None,
+    device: str,
+) -> tuple[_Diarizer, AssignSpeakersCallback, type[Exception]]:
+    from meeting_summary.diarization import (
+        DiarizationSkipped,
+        PyannoteDiarizer,
+        assign_speakers,
+    )
+
+    diarizer = PyannoteDiarizer(
+        auth_token=auth_token,
+        device=device,
+    )
+    return diarizer, assign_speakers, DiarizationSkipped
 
 
 def _report_progress(

@@ -12,3 +12,5 @@
 - Если Docker runtime задает env override в `docker-compose.yml`, нельзя ориентироваться только на `.env`: нужно явно сверять effective config контейнера, иначе легко перепутать legacy `WHISPER_MODEL_SIZE` с реально используемым `WHISPER_MODEL`.
 - Для Apple Silicon в Linux Docker нельзя предлагать `openai-whisper large-v3` как практичный default: сначала нужно проверить, есть ли реальное ускорение кроме CPU, и подбирать backend/модель под фактический runtime, а не под номинальное железо хоста.
 - При выборе Whisper-совместимой модели мало смотреть на speed/memory: нужно отдельно проверять multilingual coverage модели. `distil-large-v3` нельзя ставить как default для русскоязычного ASR только потому, что он быстрее.
+- Если в Docker обещается hot-reload редактируемого файла, нельзя монтировать один файл bind mount-ом: для editor workflow с atomic save нужно монтировать каталог, иначе контейнер остается привязан к старому inode.
+- Optional feature нельзя добавлять в базовые `dependencies`, пока не проверен import/startup-path основного приложения без этой extra: иначе выключенная функция всё равно утяжеляет установку и может сломать базовый запуск.

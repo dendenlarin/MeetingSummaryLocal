@@ -24,7 +24,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./calls:/app/calls
-      - ./meeting_summary/prompts/summary.md:/app/runtime-prompts/summary.md:ro
+      - ./meeting_summary/prompts:/app/runtime-prompts:ro
       - huggingface_cache:/root/.cache/huggingface
       - whisper_cache:/root/.cache/whisper
 
