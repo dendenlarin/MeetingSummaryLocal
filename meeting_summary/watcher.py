@@ -75,6 +75,10 @@ class CallWatcher(FileSystemEventHandler):
 
     def _process_when_ready(self, audio_path: Path) -> None:
         try:
+            LOGGER.info(
+                "[%s] 0%% | waiting_for_file | Waiting for file size to stabilize.",
+                audio_path.name,
+            )
             if not self._wait_until_stable(audio_path):
                 LOGGER.warning("File %s did not stabilize in time, skipping.", audio_path.name)
                 return
@@ -103,4 +107,3 @@ class CallWatcher(FileSystemEventHandler):
             time.sleep(self.ready_interval_seconds)
 
         return True
-

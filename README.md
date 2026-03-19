@@ -2,7 +2,7 @@
 
 Локальный сервис для автоматической обработки аудиозаписей звонков в `.m4a`.
 
-Сервис следит за папкой `calls/`, расшифровывает новые файлы через локальный `openai-whisper`, отправляет транскрипцию в локально запущенный `ollama` для summary и сохраняет результат в `.md` рядом с аудиофайлом.
+Сервис следит за папкой `calls/`, расшифровывает новые файлы через локальный `faster-whisper`, отправляет транскрипцию в локально запущенный `ollama` для summary и сохраняет результат в `.md` рядом с аудиофайлом.
 
 ## Что умеет
 
@@ -42,10 +42,10 @@ calls/demo.md
 - `ffmpeg`
 - локально запущенный `ollama`
 - хотя бы одна доступная модель в `ollama`
-- достаточно CPU или GPU для запуска `openai-whisper`
+- достаточно CPU или GPU для запуска `faster-whisper`
 - для diarization: модель `pyannote` и, как правило, токен Hugging Face для первой загрузки
 
-`openai-whisper` работает полностью локально и бесплатно, без обращения к API OpenAI. На CPU он обычно медленнее `faster-whisper`, поэтому для качества по умолчанию используется модель `medium`.
+`faster-whisper` работает полностью локально и бесплатно, без обращения к API OpenAI. Для русскоязычных звонков quality-default в этом проекте это `large-v3`: это мультиязычная модель, в отличие от `distil-large-v3`, который не подходит как default для русского контура.
 
 Установка `ffmpeg` на macOS:
 
@@ -111,8 +111,16 @@ docker compose down
 OLLAMA_MODEL=auto
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_PROMPT_PATH=./meeting_summary/prompts/summary.md
-WHISPER_MODEL=medium
+WHISPER_MODEL=large-v3
 WHISPER_DEVICE=auto
+WHISPER_COMPUTE_TYPE=auto
+WHISPER_LANGUAGE=ru
+WHISPER_INITIAL_PROMPT=
+WHISPER_TERMS=Docker,GitHub,API,backend,frontend,deploy,pipeline,OpenAI,Whisper,Ollama
+WHISPER_BEAM_SIZE=5
+WHISPER_BEST_OF=5
+WHISPER_TEMPERATURE=0
+WHISPER_VAD_FILTER=true
 ENABLE_DIARIZATION=false
 HF_TOKEN=
 PYANNOTE_DEVICE=auto
@@ -134,9 +142,25 @@ INITIAL_SCAN=true
 - если путь относительный, он резолвится относительно директории загрузки конфигурации (`base_dir` / текущая директория запуска)
 - в шаблоне подставляются только `{language}`, `{duration_seconds}` и `{transcript_block}`; остальные `{}` остаются обычным текстом
 - `WHISPER_MODEL`:
-  имя модели `openai-whisper`, например `small`, `medium` или `turbo`
+  имя модели `faster-whisper`, например `large-v3`, `medium` или `small`; `distil-large-v3` не использовать как default для русскоязычных звонков
 - `WHISPER_DEVICE`:
-  устройство для `openai-whisper`, обычно `auto`, `cpu` или `cuda`
+  устройство для `faster-whisper`, обычно `auto`, `cpu` или `cuda`
+- `WHISPER_COMPUTE_TYPE`:
+  compute type для `faster-whisper`; значение `auto` выбирает `int8` на CPU и `float16` на CUDA
+- `WHISPER_LANGUAGE`:
+  язык распознавания; для русскоязычных звонков рекомендуется `ru`, чтобы модель не блуждала между языками
+- `WHISPER_INITIAL_PROMPT`:
+  optional glossary prompt для имен, брендов и англоязычных технических терминов; лучше держать его коротким списком терминов, а не длинной инструкцией
+- `WHISPER_TERMS`:
+  короткий список терминов для auto-glossary prompt; используется только если `WHISPER_INITIAL_PROMPT` не задан
+- `WHISPER_BEAM_SIZE`:
+  ширина beam search; больше значение обычно улучшает качество, но замедляет обработку
+- `WHISPER_BEST_OF`:
+  сколько кандидатов сравнивать при декодировании
+- `WHISPER_TEMPERATURE`:
+  температура декодирования; для стабильной транскрибации рекомендуется `0`
+- `WHISPER_VAD_FILTER`:
+  включает VAD-фильтрацию до декодирования, чтобы убирать тишину и снижать hallucinations на длинных паузах
 - `WHISPER_MODEL_SIZE`:
   deprecated fallback для обратной совместимости; используется только если `WHISPER_MODEL` не задан
 - `ENABLE_DIARIZATION`:
@@ -162,6 +186,30 @@ INITIAL_SCAN=true
 - если `ollama` недоступна, сервис продолжает работать и пишет ошибку в лог
 - если `.md` уже существует, файл считается обработанным
 - если diarization не настроен или упал, файл всё равно будет обработан, но без спикеров
+- для `.m4a` diarization использует ffmpeg/`faster-whisper` decode как штатный путь, а не как шумный runtime fallback
+- в логах по каждому файлу печатаются stage-based статусы прогресса обработки
+
+## Рекомендации по качеству
+
+- Для русскоязычных звонков с техническими терминами не используйте `small` как quality-first режим; мультиязычный quality-first default здесь это `large-v3`
+- Если железо позволяет и latency не критична, для максимального качества лучше `large-v3`
+- Для mixed-language звонков лучше фиксировать `WHISPER_LANGUAGE=ru`, а glossary задавать коротким prompt или `WHISPER_TERMS` вроде `Docker,GitHub,API,backend,frontend,deploy`
+- В Docker quality-default уже принудительно подставляется через `docker-compose.yml`, даже если в локальном `.env` остался legacy `WHISPER_MODEL_SIZE=small`
+- `distil-large-v3` не подходит как quality-default для русского контура: если нужен русский, выбирайте мультиязычный `large-v3` или компромиссный `medium`
+
+## Прогресс в логах
+
+Во время обработки сервис пишет stage-progress по файлу, например:
+
+```text
+[record_test.m4a] 10% | processing_started | File is stable. Starting analysis.
+[record_test.m4a] 20% | transcribing | Transcribing audio with faster-whisper.
+[record_test.m4a] 75% | diarization_complete | Diarization finished with 2 speakers.
+[record_test.m4a] 85% | summarizing | Generating summary with Ollama.
+[record_test.m4a] 100% | completed | Saved markdown to record_test.md.
+```
+
+Это не внутренний процент самой модели Whisper, а устойчивый прогресс по стадиям пайплайна.
 
 ## Speaker Diarization
 

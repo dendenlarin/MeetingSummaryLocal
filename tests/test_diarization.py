@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from meeting_summary.diarization import (
+    DiarizationSkipped,
     PyannoteDiarizer,
     SpeakerTurn,
     _load_audio,
@@ -160,8 +161,9 @@ class DiarizationTests(unittest.TestCase):
         self.assertIs(audio["waveform"], expected_waveform)
         self.assertEqual(audio["sample_rate"], 44100)
 
-    def test_load_audio_falls_back_to_whisper_decode(self) -> None:
+    def test_load_audio_uses_faster_whisper_directly_for_m4a(self) -> None:
         fake_tensor = object()
+        torchaudio_calls: list[str] = []
 
         class _FakeTorch:
             @staticmethod
@@ -175,23 +177,41 @@ class DiarizationTests(unittest.TestCase):
 
                 return _Tensor(value)
 
-        fake_torchaudio = SimpleNamespace(
-            load=lambda _: (_ for _ in ()).throw(RuntimeError("Format not recognised"))
-        )
-        fake_whisper = SimpleNamespace(load_audio=lambda _: ["pcm"])
+        def _torchaudio_load(_: str):  # noqa: ANN001
+            torchaudio_calls.append("called")
+            raise AssertionError("torchaudio.load should not be used for m4a")
+
+        fake_torchaudio = SimpleNamespace(load=_torchaudio_load)
+        fake_faster_whisper_audio = SimpleNamespace(decode_audio=lambda *_args, **_kwargs: ["pcm"])
 
         with patch.dict(
             "sys.modules",
             {
                 "torchaudio": fake_torchaudio,
                 "torch": _FakeTorch(),
-                "whisper": fake_whisper,
+                "faster_whisper.audio": fake_faster_whisper_audio,
             },
         ):
             audio = _load_audio(Path("demo.m4a"))
 
+        self.assertEqual(torchaudio_calls, [])
         self.assertIs(audio["waveform"], fake_tensor)
         self.assertEqual(audio["sample_rate"], 16000)
+
+    def test_diarize_skips_too_short_audio_without_running_pipeline(self) -> None:
+        diarizer = PyannoteDiarizer.__new__(PyannoteDiarizer)
+        pipeline_calls: list[object] = []
+        diarizer.pipeline = lambda audio: pipeline_calls.append(audio)
+
+        short_waveform = SimpleNamespace(shape=(1, 8000))
+        with patch(
+            "meeting_summary.diarization._load_audio",
+            return_value={"waveform": short_waveform, "sample_rate": 16000},
+        ):
+            with self.assertRaises(DiarizationSkipped):
+                diarizer.diarize(audio_path=Path("short.m4a"))
+
+        self.assertEqual(pipeline_calls, [])
 
 
 if __name__ == "__main__":

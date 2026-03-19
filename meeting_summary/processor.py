@@ -32,12 +32,28 @@ class CallProcessor:
             )
             return None
 
-        transcription = self.transcriber.transcribe(audio_path)
-        summary = self.ollama_client.summarize(transcription)
-        target_path = markdown_path_for(audio_path)
-        self._write_markdown(target_path, transcription, summary)
-        LOGGER.info("Saved summary markdown to %s.", target_path)
-        return target_path
+        progress = _progress_logger(audio_path)
+        progress("processing_started", 10, "File is stable. Starting analysis.")
+
+        current_stage = "transcribing"
+        try:
+            transcription = self.transcriber.transcribe(
+                audio_path,
+                progress_callback=progress,
+            )
+            current_stage = "summarizing"
+            progress("summarizing", 85, "Generating summary with Ollama.")
+            summary = self.ollama_client.summarize(transcription)
+            current_stage = "writing_output"
+            progress("writing_output", 95, "Writing markdown output.")
+            target_path = markdown_path_for(audio_path)
+            self._write_markdown(target_path, transcription, summary)
+            LOGGER.info("Saved summary markdown to %s.", target_path)
+            progress("completed", 100, f"Saved markdown to {target_path.name}.")
+            return target_path
+        except Exception as exc:
+            progress("failed", 100, f"Failed during {current_stage}: {exc}")
+            raise
 
     def _write_markdown(
         self,
@@ -60,3 +76,10 @@ class CallProcessor:
             temp_path = Path(handle.name)
 
         temp_path.replace(target_path)
+
+
+def _progress_logger(audio_path: Path):
+    def _log(stage: str, percent: int, message: str) -> None:
+        LOGGER.info("[%s] %s%% | %s | %s", audio_path.name, percent, stage, message)
+
+    return _log

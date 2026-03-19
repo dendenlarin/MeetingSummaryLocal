@@ -5,10 +5,13 @@ from inspect import signature
 import logging
 from pathlib import Path
 from typing import Any
+import warnings
 
 from meeting_summary.models import TranscriptUtterance
 
 LOGGER = logging.getLogger(__name__)
+_FASTER_WHISPER_PRIMARY_SUFFIXES = {".aac", ".m4a", ".m4b", ".mp3", ".mp4"}
+_MIN_DIARIZATION_DURATION_SECONDS = 1.0
 
 
 @dataclass(slots=True, frozen=True)
@@ -16,6 +19,10 @@ class SpeakerTurn:
     speaker: str
     start_seconds: float
     end_seconds: float
+
+
+class DiarizationSkipped(RuntimeError):
+    """Raised when diarization should be skipped for the current audio."""
 
 
 def assign_speakers(
@@ -113,7 +120,16 @@ class PyannoteDiarizer:
         LOGGER.info("Loaded pyannote diarization pipeline '%s'.", model_name)
 
     def diarize(self, audio_path: Path) -> list[SpeakerTurn]:
-        annotation = _resolve_annotation(self.pipeline(_load_audio(audio_path)))
+        audio = _load_audio(audio_path)
+        _ensure_diarization_input(audio_path, audio["waveform"], audio["sample_rate"])
+
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"std\(\): degrees of freedom is <= 0.*",
+                category=UserWarning,
+            )
+            annotation = _resolve_annotation(self.pipeline(audio))
         speaker_turns: list[SpeakerTurn] = []
         for segment, _, speaker in annotation.itertracks(yield_label=True):
             speaker_turns.append(
@@ -138,12 +154,10 @@ class PyannoteDiarizer:
 
 
 def _load_audio(audio_path: Path) -> dict[str, Any]:
-    try:
-        import torchaudio
-
-        waveform, sample_rate = torchaudio.load(str(audio_path))
-    except Exception:
-        waveform, sample_rate = _load_audio_with_whisper(audio_path)
+    if _should_decode_with_faster_whisper(audio_path):
+        waveform, sample_rate = _load_audio_with_faster_whisper(audio_path)
+    else:
+        waveform, sample_rate = _load_audio_with_torchaudio(audio_path)
 
     return {
         "waveform": waveform,
@@ -151,16 +165,55 @@ def _load_audio(audio_path: Path) -> dict[str, Any]:
     }
 
 
-def _load_audio_with_whisper(audio_path: Path) -> tuple[Any, int]:
-    import whisper
+def _should_decode_with_faster_whisper(audio_path: Path) -> bool:
+    return audio_path.suffix.lower() in _FASTER_WHISPER_PRIMARY_SUFFIXES
+
+
+def _load_audio_with_torchaudio(audio_path: Path) -> tuple[Any, int]:
+    try:
+        import torchaudio
+
+        waveform, sample_rate = torchaudio.load(str(audio_path))
+    except Exception:
+        waveform, sample_rate = _load_audio_with_faster_whisper(audio_path)
+    return waveform, sample_rate
+
+
+def _load_audio_with_faster_whisper(audio_path: Path) -> tuple[Any, int]:
+    from faster_whisper.audio import decode_audio
     import torch
 
-    LOGGER.info(
-        "torchaudio.load could not read %s for diarization. Falling back to whisper audio decode.",
-        audio_path.name,
-    )
-    audio = whisper.load_audio(str(audio_path))
+    audio = decode_audio(str(audio_path), sampling_rate=16000)
     return torch.from_numpy(audio).unsqueeze(0), 16000
+
+
+def _ensure_diarization_input(audio_path: Path, waveform: Any, sample_rate: int) -> None:
+    num_samples = _waveform_num_samples(waveform)
+    if num_samples is None or sample_rate <= 0:
+        return
+
+    if num_samples <= 1:
+        raise DiarizationSkipped(f"{audio_path.name} has an empty waveform for diarization.")
+
+    duration_seconds = num_samples / sample_rate
+    if duration_seconds < _MIN_DIARIZATION_DURATION_SECONDS:
+        raise DiarizationSkipped(
+            f"{audio_path.name} is too short for reliable diarization ({duration_seconds:.2f}s)."
+        )
+
+
+def _waveform_num_samples(waveform: Any) -> int | None:
+    shape = getattr(waveform, "shape", None)
+    if shape:
+        try:
+            return int(shape[-1])
+        except (TypeError, ValueError, IndexError):
+            return None
+
+    try:
+        return int(len(waveform))
+    except TypeError:
+        return None
 
 
 def _resolve_annotation(output: Any) -> Any:

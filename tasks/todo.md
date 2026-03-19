@@ -1,5 +1,44 @@
 # TODO
 
+## 2026-03-19 Исправить ошибочный English-only default model
+
+- [x] Подтвердить по логам и конфигу, что контейнер реально грузит `distil-large-v3` при `language=ru`
+- [x] Вернуть мультиязычный `large-v3` в `.env`, Docker defaults и config defaults
+- [x] Убрать из README и тестов неверную рекомендацию `distil-large-v3` для русского контура
+- [x] Обновить lessons/review и повторно проверить unit/runtime после смены default-модели
+
+## 2026-03-19 Вернуть quality-first ASR в локальный Docker через faster-whisper
+
+- [x] Зафиксировать безопасный quality-first runtime для Docker CPU на Apple Silicon без `openai-whisper large-v3`
+- [x] Перевести `Transcriber` обратно на `faster-whisper` с VAD и glossary, не ломая downstream интерфейсы
+- [x] Вернуть совместимый decode path для diarization без зависимости от `openai-whisper`
+- [x] Обновить конфиг, Docker defaults, пример env и README под `distil-large-v3` / `large-v3`
+- [x] Переписать релевантные unit-тесты и прогнать compile/tests/docker verify
+
+## 2026-03-19 Stabilize diarization/runtime logging and improve mixed-language ASR
+
+- [x] Зафиксировать причину шумных diarization warning/fallback и перевести `.m4a` на детерминированный decode path
+- [x] Добавить controlled skip/guardrails для коротких или вырожденных waveform в diarization
+- [x] Усилить quality-path Whisper через короткий glossary из конфига без длинного default prompt
+- [x] Добавить stage-progress по файлу в Docker-логах без усложнения пайплайна
+- [x] Перепроверить архитектурную простоту решения, обновить README, прогнать тесты и добавить review-итог
+
+## 2026-03-19 Decode fallback для нестабильного openai-whisper
+
+- [x] Зафиксировать retryable decode-crash и безопасный fallback-порядок для `Transcriber`
+- [x] Убрать длинный glossary prompt из Docker default, сохранив поддержку пользовательского prompt
+- [x] Добавить регрессионные тесты на staged retry и успешный fallback без `initial_prompt`
+- [x] Обновить README с новым безопасным default для mixed-language звонков
+- [x] Прогнать релевантные тесты, пересобрать контейнер и добавить review-итог
+
+## 2026-03-19 Улучшение качества распознавания Whisper
+
+- [x] Зафиксировать quality-first требования для русской речи с англоязычными терминами
+- [x] Расширить конфиг и `Transcriber` параметрами языка, glossary prompt и quality decode settings
+- [x] Обновить Docker и пример env без правки пользовательского `.env`
+- [x] Добавить тесты на новые параметры `whisper` и обновить README
+- [x] Прогнать релевантные проверки и добавить review-итог
+
 ## 2026-03-19 Переход с faster-whisper на openai-whisper
 
 - [x] Зафиксировать совместимую миграцию в зависимостях, конфиге и Docker runtime
@@ -71,6 +110,22 @@
 
 # Review
 
+- Подтвержден корень проблемы с англоязычной кашей: контейнер действительно грузил `distil-large-v3` при `WHISPER_LANGUAGE=ru`, но эта модель не подходит как default для русского ASR.
+- Default-модель для проекта и Docker исправлена на мультиязычную `large-v3`; `distil-large-v3` убран из `.env`, `.env.example`, `docker-compose.yml`, `Settings.load()` и документации как recommendation для русского контура.
+- Обновлены unit-тесты на новый effective default и lesson о том, что при выборе Whisper-модели нужно отдельно проверять multilingual coverage, а не только latency.
+
+- ASR backend снова переведен на `faster-whisper`: `Transcriber` теперь использует `WhisperModel`, автоматически выбирает `compute_type=int8` на CPU и `float16` на CUDA, строит короткий glossary из `WHISPER_TERMS` и включает `vad_filter` как штатный quality path.
+- Для Docker на CPU quality-default изменен с непрактичного `openai-whisper large-v3` на `faster-whisper distil-large-v3`; в конфиг возвращены `WHISPER_COMPUTE_TYPE` и `WHISPER_VAD_FILTER`, а в корень проекта добавлен отсутствовавший `.env.example`.
+- Для diarization `.m4a` decode path больше не зависит от `openai-whisper`: используется `faster_whisper.audio.decode_audio`, а существующие guardrails и controlled skip сохранены.
+- Переписаны unit-тесты на новый runtime contract `faster-whisper`, `compute_type`, `vad_filter` и glossary prompt; stage-progress в логах также обновлен под новый backend.
+- Проверено: `python3 -m compileall meeting_summary tests`
+- Проверено: `.venv/bin/python -m unittest discover -s tests -v`
+- Проверено: `.venv/bin/python -c "import faster_whisper; print(faster_whisper.__file__)"`
+- Проверено: `docker-compose up --build -d`
+- Проверено: `docker-compose ps`
+- Проверено: `docker inspect meeting-summary --format '{{.RestartCount}} {{.State.Status}} {{.State.OOMKilled}} {{.State.ExitCode}}'`
+- Итог Docker verify после пересборки: `RestartCount=0`, `running`, `OOMKilled=false`, `ExitCode=0`, то есть прежний crash-loop `137` после миграции больше не воспроизводится на старте контейнера.
+
 - Для hot-reload добавлен явный путь `OLLAMA_PROMPT_PATH`, prompt теперь читается из файла при каждом новом summary.
 - В Docker `./meeting_summary/prompts/summary.md` примонтирован в контейнер как bind mount, поэтому правки на хосте видны без пересборки и без рестарта.
 - Добавлены тесты на перечитывание prompt-файла и на понятную ошибку при битом шаблоне.
@@ -97,6 +152,7 @@
 - Проверено: `docker-compose up --build -d`
 - Проверено: `docker-compose ps`
 - Проверено: `docker-compose logs --tail=120 meeting-summary`
+- Проверено: `docker-compose logs --tail=120 meeting-summary`
 - Prompt-шаблон больше не прогоняется через `str.format`, поэтому literal `{}` в редактируемом `.md` не ломают генерацию summary; подставляются только `{language}`, `{duration_seconds}` и `{transcript_block}`.
 - `OLLAMA_PROMPT_PATH` теперь резолвится относительно `base_dir`, если задан относительным путём, что выравнивает его поведение с `CALLS_DIR` и сценариями `Settings.load(base_dir=...)`.
 - Добавлены регрессионные тесты на literal braces в prompt и на относительный `OLLAMA_PROMPT_PATH`.
@@ -111,5 +167,35 @@
 - Проверено: `.venv/bin/python -m unittest discover -s tests -v`
 - Проверено: `.venv/bin/pip install -e .`
 - Проверено: `.venv/bin/python -c "import whisper; import meeting_summary.transcriber as transcriber; print(whisper.__file__); print('medium' in whisper.available_models())"`
+- Проверено: `docker-compose up --build -d`
+- Проверено: `docker-compose ps`
+- Для качества распознавания добавлены явные параметры `WHISPER_LANGUAGE`, `WHISPER_INITIAL_PROMPT`, `WHISPER_BEAM_SIZE`, `WHISPER_BEST_OF` и `WHISPER_TEMPERATURE`; `Transcriber` теперь передает их в `openai-whisper`.
+- В runtime учтено ограничение текущего `openai-whisper`: `beam_size` и `best_of` нельзя передавать вместе, а `best_of` несовместим с `temperature=0`; поэтому код автоматически использует `beam_size` при `temperature=0` и `best_of` только при ненулевой температуре.
+- В `docker-compose.yml` quality-default теперь принудительно задает `WHISPER_MODEL=medium`, `WHISPER_LANGUAGE=ru` и glossary prompt, чтобы контейнер не деградировал из-за legacy `WHISPER_MODEL_SIZE=small` в пользовательском `.env`.
+- Документация и `.env.example` переведены на новый quality-first профиль для русского разговора с англоязычными техническими терминами.
+- Добавлены unit-тесты на новые настройки config и на фактические аргументы вызова `whisper.transcribe(...)`.
+- Проверено: `python3 -m compileall meeting_summary tests`
+- Проверено: `.venv/bin/python -m unittest tests.test_config tests.test_transcriber tests.test_diarization -v`
+- Проверено: `.venv/bin/python -m unittest discover -s tests -v`
+- Проверено: `docker-compose up --build -d`
+- Проверено: `docker-compose ps`
+- Для `openai-whisper` добавлен staged fallback внутри `Transcriber`: после retryable decode-crash сервис повторяет транскрибацию без `initial_prompt`, затем без `condition_on_previous_text`, а в конце в безопасном greedy-профиле без beam/best_of.
+- Retry включается только для конкретного внутреннего decode runtime-error `cannot reshape tensor of 0 elements ...`, чтобы не маскировать реальные ошибки чтения файла или инфраструктуры.
+- Длинный glossary prompt больше не навязывается Docker default: `WHISPER_INITIAL_PROMPT` по умолчанию пустой, но поддержка пользовательского prompt сохранена.
+- README обновлен: для mixed-language звонков рекомендован короткий glossary prompt, а не длинная инструкция; также зафиксировано автоматическое fallback-поведение при decode-сбое.
+- Добавлены регрессионные unit-тесты на staged retry, safe greedy fallback и отсутствие fallback для нерелевантных runtime-ошибок.
+- Проверено: `python3 -m compileall meeting_summary tests`
+- Проверено: `.venv/bin/python -m unittest tests.test_transcriber tests.test_config tests.test_diarization -v`
+- Проверено: `.venv/bin/python -m unittest discover -s tests -v`
+- Проверено: `docker-compose up --build -d`
+- Для diarization `.m4a` больше не идет по пути `torchaudio -> fallback`: сервис детерминированно декодирует контейнер через `whisper.load_audio`, а `torchaudio` остается основным путем только для PCM-friendly форматов вроде `.wav`.
+- В `PyannoteDiarizer` добавлены guardrails для пустых и слишком коротких waveform, поэтому diarization теперь делает controlled skip вместо шумных внутренних warning и бесполезных попыток на вырожденном аудио.
+- Для mixed-language качества добавлен `WHISPER_TERMS`: если явный `WHISPER_INITIAL_PROMPT` не задан, `Transcriber` автоматически строит короткий glossary prompt из списка терминов без длинной instruction-style строки.
+- В логах появился stage-progress по файлу: watcher сообщает ожидание стабилизации, processor/transcriber логируют стадии `processing_started`, `transcribing`, `diarizing`, `summarizing`, `writing_output`, `completed` или `failed`.
+- Шум от сторонних библиотек на старте сервиса снижен в `configure_logging()`: `speechbrain`, `matplotlib` и `lightning*` переведены на `WARNING`, а известное предупреждение `torch.load(weights_only=False)` подавлено как низкосигнальное для этого сервиса.
+- Архитектурно решение осталось простым: пайплайн по-прежнему линейный `watcher -> processor -> transcriber/ollama -> markdown`, без лишней очереди или state-machine-модуля; для прогресса добавлен только тонкий callback между `processor` и `transcriber`.
+- Добавлены тесты на primary decode path для `.m4a`, controlled skip diarization, `WHISPER_TERMS` и порядок progress-stage логов.
+- Проверено: `python3 -m compileall meeting_summary tests`
+- Проверено: `.venv/bin/python -m unittest discover -s tests -v`
 - Проверено: `docker-compose up --build -d`
 - Проверено: `docker-compose ps`

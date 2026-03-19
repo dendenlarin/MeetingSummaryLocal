@@ -78,6 +78,47 @@ class SettingsTests(unittest.TestCase):
             settings = Settings.load(base_dir=self.base_dir)
 
         self.assertEqual(settings.whisper_model, "small")
+        self.assertEqual(settings.whisper_compute_type, "auto")
+
+    def test_load_applies_quality_first_whisper_defaults(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            settings = Settings.load(base_dir=self.base_dir)
+
+        self.assertEqual(settings.whisper_model, "large-v3")
+        self.assertEqual(settings.whisper_compute_type, "auto")
+        self.assertIsNone(settings.whisper_language)
+        self.assertIsNone(settings.whisper_initial_prompt)
+        self.assertEqual(settings.whisper_terms, ())
+        self.assertEqual(settings.whisper_beam_size, 5)
+        self.assertEqual(settings.whisper_best_of, 5)
+        self.assertEqual(settings.whisper_temperature, 0.0)
+        self.assertTrue(settings.whisper_vad_filter)
+
+    def test_load_reads_explicit_whisper_quality_overrides(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "WHISPER_LANGUAGE": "ru",
+                "WHISPER_INITIAL_PROMPT": "Docker GitHub API",
+                "WHISPER_TERMS": "Docker, GitHub, API, deploy",
+                "WHISPER_COMPUTE_TYPE": "float16",
+                "WHISPER_BEAM_SIZE": "7",
+                "WHISPER_BEST_OF": "6",
+                "WHISPER_TEMPERATURE": "0.2",
+                "WHISPER_VAD_FILTER": "false",
+            },
+            clear=True,
+        ):
+            settings = Settings.load(base_dir=self.base_dir)
+
+        self.assertEqual(settings.whisper_language, "ru")
+        self.assertEqual(settings.whisper_initial_prompt, "Docker GitHub API")
+        self.assertEqual(settings.whisper_terms, ("Docker", "GitHub", "API", "deploy"))
+        self.assertEqual(settings.whisper_compute_type, "float16")
+        self.assertEqual(settings.whisper_beam_size, 7)
+        self.assertEqual(settings.whisper_best_of, 6)
+        self.assertEqual(settings.whisper_temperature, 0.2)
+        self.assertFalse(settings.whisper_vad_filter)
 
     def test_true_enable_diarization_is_treated_as_enabled(self) -> None:
         with patch.dict(os.environ, {"ENABLE_DIARIZATION": "true"}, clear=True):
