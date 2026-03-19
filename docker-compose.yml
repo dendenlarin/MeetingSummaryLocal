@@ -1,0 +1,33 @@
+services:
+  meeting-summary:
+    build:
+      context: .
+    container_name: meeting-summary
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      CALLS_DIR: /app/calls
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_PROMPT_PATH: /app/runtime-prompts/summary.md
+      WHISPER_DEVICE: cpu
+      WHISPER_MODEL: "${WHISPER_MODEL:-large-v3}"
+      WHISPER_COMPUTE_TYPE: "${WHISPER_COMPUTE_TYPE:-auto}"
+      WHISPER_LANGUAGE: "${WHISPER_LANGUAGE:-ru}"
+      WHISPER_INITIAL_PROMPT: "${WHISPER_INITIAL_PROMPT:-}"
+      WHISPER_TERMS: "${WHISPER_TERMS:-Docker,GitHub,API,backend,frontend,deploy,pipeline,OpenAI,Whisper,Ollama}"
+      WHISPER_BEAM_SIZE: "${WHISPER_BEAM_SIZE:-5}"
+      WHISPER_BEST_OF: "${WHISPER_BEST_OF:-5}"
+      WHISPER_TEMPERATURE: "${WHISPER_TEMPERATURE:-0}"
+      WHISPER_VAD_FILTER: "${WHISPER_VAD_FILTER:-true}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./calls:/app/calls
+      - ./meeting_summary/prompts:/app/runtime-prompts:ro
+      - huggingface_cache:/root/.cache/huggingface
+      - whisper_cache:/root/.cache/whisper
+
+volumes:
+  huggingface_cache:
+  whisper_cache:
