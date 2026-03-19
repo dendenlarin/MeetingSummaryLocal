@@ -16,9 +16,8 @@ def main() -> None:
     settings.calls_dir.mkdir(parents=True, exist_ok=True)
 
     transcriber = Transcriber(
-        model_size=settings.whisper_model_size,
+        model_name=settings.whisper_model,
         device=settings.whisper_device,
-        compute_type=settings.whisper_compute_type,
         enable_diarization=settings.enable_diarization,
         diarization_auth_token=settings.hf_token,
         diarization_device=settings.pyannote_device,

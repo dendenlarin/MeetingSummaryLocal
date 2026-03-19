@@ -1,5 +1,13 @@
 # TODO
 
+## 2026-03-19 Переход с faster-whisper на openai-whisper
+
+- [x] Зафиксировать совместимую миграцию в зависимостях, конфиге и Docker runtime
+- [x] Перевести `Transcriber` на `openai-whisper` без изменения downstream-интерфейсов
+- [x] Заменить fallback-декодирование аудио для diarization на `whisper.audio.load_audio`
+- [x] Добавить unit-тесты на новый config/runtime и transcriber
+- [x] Обновить README, прогнать релевантные тесты и добавить review-итог
+
 ## 2026-03-18 Hot reload prompt без рестарта
 
 - [x] Зафиксировать требование: prompt должен обновляться без пересборки и без рестарта контейнера
@@ -94,3 +102,14 @@
 - Добавлены регрессионные тесты на literal braces в prompt и на относительный `OLLAMA_PROMPT_PATH`.
 - Проверено: `.venv/bin/python -m unittest tests.test_config tests.test_ollama_client -v`
 - Проверено: `.venv/bin/python -m unittest discover -s tests -v`
+- Транскрибация полностью переведена на `openai-whisper`: `Settings` теперь использует `WHISPER_MODEL` c legacy fallback на `WHISPER_MODEL_SIZE`, а `WHISPER_COMPUTE_TYPE` удалён из активного runtime.
+- `Transcriber` теперь загружает модель через `whisper.load_model(...)`, сам резолвит `WHISPER_DEVICE=auto` в `cpu`/`cuda` и собирает `TranscriptionResult` из сегментов `openai-whisper` без изменения downstream-моделей.
+- Fallback загрузки аудио для diarization больше не зависит от `faster-whisper`: используется `whisper.load_audio(...)`, а в Docker добавлен отдельный volume для кэша `whisper` при сохранении `huggingface` кэша для `pyannote`.
+- Добавлены unit-тесты на новый config fallback и на `Transcriber`; релевантные тесты и полный тестовый набор зелёные.
+- Проверено: `python3 -m compileall meeting_summary tests`
+- Проверено: `.venv/bin/python -m unittest tests.test_config tests.test_diarization tests.test_transcriber -v`
+- Проверено: `.venv/bin/python -m unittest discover -s tests -v`
+- Проверено: `.venv/bin/pip install -e .`
+- Проверено: `.venv/bin/python -c "import whisper; import meeting_summary.transcriber as transcriber; print(whisper.__file__); print('medium' in whisper.available_models())"`
+- Проверено: `docker-compose up --build -d`
+- Проверено: `docker-compose ps`

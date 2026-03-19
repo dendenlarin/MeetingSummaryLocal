@@ -11,13 +11,14 @@ services:
       OLLAMA_BASE_URL: http://host.docker.internal:11434
       OLLAMA_PROMPT_PATH: /app/runtime-prompts/summary.md
       WHISPER_DEVICE: cpu
-      WHISPER_COMPUTE_TYPE: int8
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./calls:/app/calls
       - ./meeting_summary/prompts/summary.md:/app/runtime-prompts/summary.md:ro
-      - whisper_cache:/root/.cache/huggingface
+      - huggingface_cache:/root/.cache/huggingface
+      - whisper_cache:/root/.cache/whisper
 
 volumes:
+  huggingface_cache:
   whisper_cache:

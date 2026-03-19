@@ -12,25 +12,20 @@ LOGGER = logging.getLogger(__name__)
 class Transcriber:
     def __init__(
         self,
-        model_size: str,
+        model_name: str,
         device: str,
-        compute_type: str,
         enable_diarization: bool = False,
         diarization_auth_token: str | None = None,
         diarization_device: str = "auto",
     ) -> None:
-        from faster_whisper import WhisperModel
+        import whisper
 
-        self.model = WhisperModel(
-            model_size,
-            device=device,
-            compute_type=compute_type,
-        )
+        self.device = _resolve_whisper_device(device)
+        self.model = whisper.load_model(model_name, device=self.device)
         LOGGER.info(
-            "Loaded faster-whisper model '%s' with device=%s compute_type=%s.",
-            model_size,
-            device,
-            compute_type,
+            "Loaded openai-whisper model '%s' with device=%s.",
+            model_name,
+            self.device,
         )
         self.diarizer: PyannoteDiarizer | None = None
         if enable_diarization:
@@ -46,15 +41,18 @@ class Transcriber:
                 )
 
     def transcribe(self, audio_path: Path) -> TranscriptionResult:
-        segments, info = self.model.transcribe(str(audio_path), vad_filter=True)
+        result = self.model.transcribe(
+            str(audio_path),
+            fp16=self.device == "cuda",
+        )
         utterances = [
             TranscriptUtterance(
-                text=segment.text.strip(),
-                start_seconds=float(segment.start) if segment.start is not None else None,
-                end_seconds=float(segment.end) if segment.end is not None else None,
+                text=segment["text"].strip(),
+                start_seconds=float(segment["start"]) if segment.get("start") is not None else None,
+                end_seconds=float(segment["end"]) if segment.get("end") is not None else None,
             )
-            for segment in segments
-            if segment.text.strip()
+            for segment in result.get("segments", [])
+            if segment.get("text", "").strip()
         ]
 
         if self.diarizer is not None:
@@ -75,7 +73,26 @@ class Transcriber:
         return TranscriptionResult(
             source_path=audio_path,
             transcript=transcript,
-            language=getattr(info, "language", None),
-            duration_seconds=getattr(info, "duration", None),
+            language=result.get("language"),
+            duration_seconds=_transcript_duration_seconds(utterances),
             utterances=utterances,
         )
+
+
+def _resolve_whisper_device(device: str) -> str:
+    if device != "auto":
+        return device
+
+    import torch
+
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _transcript_duration_seconds(utterances: list[TranscriptUtterance]) -> float | None:
+    end_times = [
+        utterance.end_seconds for utterance in utterances if utterance.end_seconds is not None
+    ]
+    if not end_times:
+        return None
+
+    return max(end_times)
