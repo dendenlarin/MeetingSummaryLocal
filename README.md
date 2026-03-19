@@ -2,7 +2,7 @@
 
 Локальный сервис для автоматической обработки аудиозаписей звонков в `.m4a`.
 
-Сервис следит за папкой `calls/`, расшифровывает новые файлы через `faster-whisper`, отправляет транскрипцию в локально запущенный `ollama` для summary и сохраняет результат в `.md` рядом с аудиофайлом.
+Сервис следит за папкой `calls/`, расшифровывает новые файлы через локальный `openai-whisper`, отправляет транскрипцию в локально запущенный `ollama` для summary и сохраняет результат в `.md` рядом с аудиофайлом.
 
 ## Что умеет
 
@@ -42,7 +42,10 @@ calls/demo.md
 - `ffmpeg`
 - локально запущенный `ollama`
 - хотя бы одна доступная модель в `ollama`
+- достаточно CPU или GPU для запуска `openai-whisper`
 - для diarization: модель `pyannote` и, как правило, токен Hugging Face для первой загрузки
+
+`openai-whisper` работает полностью локально и бесплатно, без обращения к API OpenAI. На CPU он обычно медленнее `faster-whisper`, поэтому для качества по умолчанию используется модель `medium`.
 
 Установка `ffmpeg` на macOS:
 
@@ -97,7 +100,7 @@ docker compose down
 - `OLLAMA_BASE_URL=http://host.docker.internal:11434`
 - `OLLAMA_PROMPT_PATH=/app/runtime-prompts/summary.md`
 
-Папка `./calls` и файл `./meeting_summary/prompts/summary.md` монтируются в контейнер, а кэш `faster-whisper` сохраняется в docker volume.
+Папка `./calls` и файл `./meeting_summary/prompts/summary.md` монтируются в контейнер, а кэши `whisper` и `huggingface` сохраняются в docker volume.
 Это значит, что prompt можно менять на хосте без пересборки образа и без рестарта сервиса: следующий summary возьмёт уже новую версию файла.
 
 ## Конфигурация
@@ -108,9 +111,8 @@ docker compose down
 OLLAMA_MODEL=auto
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_PROMPT_PATH=./meeting_summary/prompts/summary.md
-WHISPER_MODEL_SIZE=small
+WHISPER_MODEL=medium
 WHISPER_DEVICE=auto
-WHISPER_COMPUTE_TYPE=default
 ENABLE_DIARIZATION=false
 HF_TOKEN=
 PYANNOTE_DEVICE=auto
@@ -131,12 +133,12 @@ INITIAL_SCAN=true
 - если переменная не задана, используется встроенный prompt из ресурсов пакета `meeting_summary/prompts/summary.md`
 - если путь относительный, он резолвится относительно директории загрузки конфигурации (`base_dir` / текущая директория запуска)
 - в шаблоне подставляются только `{language}`, `{duration_seconds}` и `{transcript_block}`; остальные `{}` остаются обычным текстом
-- `WHISPER_MODEL_SIZE`:
-  размер модели `faster-whisper`, например `small` или `medium`
+- `WHISPER_MODEL`:
+  имя модели `openai-whisper`, например `small`, `medium` или `turbo`
 - `WHISPER_DEVICE`:
-  устройство для `faster-whisper`, обычно `auto` или `cpu`
-- `WHISPER_COMPUTE_TYPE`:
-  режим вычислений, например `default` или `int8`
+  устройство для `openai-whisper`, обычно `auto`, `cpu` или `cuda`
+- `WHISPER_MODEL_SIZE`:
+  deprecated fallback для обратной совместимости; используется только если `WHISPER_MODEL` не задан
 - `ENABLE_DIARIZATION`:
   включает speaker diarization через `pyannote`
 - пустое значение трактуется как `false`
@@ -155,7 +157,7 @@ INITIAL_SCAN=true
 
 ## Поведение при ошибках
 
-- если указанной модели нет, сервис попробует выбрать первую доступную локальную модель
+- если указано некорректное имя модели `whisper`, загрузка завершится ошибкой при старте сервиса
 - ошибка по одному файлу не останавливает watcher
 - если `ollama` недоступна, сервис продолжает работать и пишет ошибку в лог
 - если `.md` уже существует, файл считается обработанным

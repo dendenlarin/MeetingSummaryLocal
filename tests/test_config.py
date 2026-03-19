@@ -63,6 +63,22 @@ class SettingsTests(unittest.TestCase):
 
         self.assertFalse(settings.enable_diarization)
 
+    def test_load_prefers_whisper_model_over_legacy_model_size(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"WHISPER_MODEL": "medium", "WHISPER_MODEL_SIZE": "small"},
+            clear=True,
+        ):
+            settings = Settings.load(base_dir=self.base_dir)
+
+        self.assertEqual(settings.whisper_model, "medium")
+
+    def test_load_uses_legacy_whisper_model_size_as_fallback(self) -> None:
+        with patch.dict(os.environ, {"WHISPER_MODEL_SIZE": "small"}, clear=True):
+            settings = Settings.load(base_dir=self.base_dir)
+
+        self.assertEqual(settings.whisper_model, "small")
+
     def test_true_enable_diarization_is_treated_as_enabled(self) -> None:
         with patch.dict(os.environ, {"ENABLE_DIARIZATION": "true"}, clear=True):
             settings = Settings.load(base_dir=self.base_dir)

@@ -143,7 +143,7 @@ def _load_audio(audio_path: Path) -> dict[str, Any]:
 
         waveform, sample_rate = torchaudio.load(str(audio_path))
     except Exception:
-        waveform, sample_rate = _load_audio_with_faster_whisper(audio_path)
+        waveform, sample_rate = _load_audio_with_whisper(audio_path)
 
     return {
         "waveform": waveform,
@@ -151,15 +151,15 @@ def _load_audio(audio_path: Path) -> dict[str, Any]:
     }
 
 
-def _load_audio_with_faster_whisper(audio_path: Path) -> tuple[Any, int]:
-    from faster_whisper.audio import decode_audio
+def _load_audio_with_whisper(audio_path: Path) -> tuple[Any, int]:
+    import whisper
     import torch
 
     LOGGER.info(
-        "torchaudio.load could not read %s for diarization. Falling back to faster-whisper audio decode.",
+        "torchaudio.load could not read %s for diarization. Falling back to whisper audio decode.",
         audio_path.name,
     )
-    audio = decode_audio(str(audio_path), sampling_rate=16000)
+    audio = whisper.load_audio(str(audio_path))
     return torch.from_numpy(audio).unsqueeze(0), 16000
 
 

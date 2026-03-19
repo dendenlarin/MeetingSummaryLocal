@@ -160,7 +160,7 @@ class DiarizationTests(unittest.TestCase):
         self.assertIs(audio["waveform"], expected_waveform)
         self.assertEqual(audio["sample_rate"], 44100)
 
-    def test_load_audio_falls_back_to_faster_whisper_decode(self) -> None:
+    def test_load_audio_falls_back_to_whisper_decode(self) -> None:
         fake_tensor = object()
 
         class _FakeTorch:
@@ -178,14 +178,14 @@ class DiarizationTests(unittest.TestCase):
         fake_torchaudio = SimpleNamespace(
             load=lambda _: (_ for _ in ()).throw(RuntimeError("Format not recognised"))
         )
-        fake_audio_module = SimpleNamespace(decode_audio=lambda _, sampling_rate=16000: ["pcm"])
+        fake_whisper = SimpleNamespace(load_audio=lambda _: ["pcm"])
 
         with patch.dict(
             "sys.modules",
             {
                 "torchaudio": fake_torchaudio,
                 "torch": _FakeTorch(),
-                "faster_whisper.audio": fake_audio_module,
+                "whisper": fake_whisper,
             },
         ):
             audio = _load_audio(Path("demo.m4a"))

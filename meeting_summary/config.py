@@ -41,9 +41,8 @@ class Settings:
     ollama_model: str
     ollama_base_url: str
     ollama_prompt_path: Path
-    whisper_model_size: str
+    whisper_model: str
     whisper_device: str
-    whisper_compute_type: str
     enable_diarization: bool
     hf_token: str | None
     pyannote_device: str
@@ -61,9 +60,10 @@ class Settings:
             ollama_model=os.getenv("OLLAMA_MODEL", "auto"),
             ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
             ollama_prompt_path=_resolve_ollama_prompt_path(root),
-            whisper_model_size=os.getenv("WHISPER_MODEL_SIZE", "small"),
+            whisper_model=os.getenv("WHISPER_MODEL")
+            or os.getenv("WHISPER_MODEL_SIZE")
+            or "medium",
             whisper_device=os.getenv("WHISPER_DEVICE", "auto"),
-            whisper_compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "default"),
             enable_diarization=_env_flag("ENABLE_DIARIZATION", default=False),
             hf_token=os.getenv("HF_TOKEN") or None,
             pyannote_device=os.getenv("PYANNOTE_DEVICE", "auto"),
