@@ -16,6 +16,11 @@ class _FakeTranscriber:
         self.progress_callback = progress_callback
         if progress_callback is not None:
             progress_callback("transcribing", 20, "Transcribing audio with faster-whisper.")
+            progress_callback(
+                "transcribing_progress",
+                32,
+                "Processed 5.0 / 15.0 min of audio.",
+            )
             progress_callback("transcription_complete", 55, "Collected 1 transcript segments.")
             progress_callback("diarization_skipped", 75, "Diarization disabled.")
 
@@ -51,6 +56,7 @@ class ProcessorTests(unittest.TestCase):
             [
                 ("demo.m4a", 10, "processing_started", "File is stable. Starting analysis."),
                 ("demo.m4a", 20, "transcribing", "Transcribing audio with faster-whisper."),
+                ("demo.m4a", 32, "transcribing_progress", "Processed 5.0 / 15.0 min of audio."),
                 ("demo.m4a", 55, "transcription_complete", "Collected 1 transcript segments."),
                 ("demo.m4a", 75, "diarization_skipped", "Diarization disabled."),
                 ("demo.m4a", 85, "summarizing", "Generating summary with Ollama."),

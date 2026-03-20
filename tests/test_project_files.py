@@ -23,6 +23,14 @@ class ProjectFilesTests(unittest.TestCase):
             docker_compose,
         )
 
+    def test_docker_compose_exposes_duplicate_cooldown_env(self) -> None:
+        docker_compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+        self.assertIn(
+            'FILE_DUPLICATE_COOLDOWN_SECONDS: "${FILE_DUPLICATE_COOLDOWN_SECONDS:-120}"',
+            docker_compose,
+        )
+
     def test_pyannote_is_optional_dependency(self) -> None:
         pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 

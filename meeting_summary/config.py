@@ -80,6 +80,7 @@ class Settings:
     pyannote_device: str
     file_ready_checks: int
     file_ready_interval_seconds: float
+    file_duplicate_cooldown_seconds: float
     initial_scan: bool
 
     @classmethod
@@ -110,6 +111,9 @@ class Settings:
             file_ready_checks=int(os.getenv("FILE_READY_CHECKS", "3")),
             file_ready_interval_seconds=float(
                 os.getenv("FILE_READY_INTERVAL_SECONDS", "2")
+            ),
+            file_duplicate_cooldown_seconds=float(
+                os.getenv("FILE_DUPLICATE_COOLDOWN_SECONDS", "120")
             ),
             initial_scan=_env_flag("INITIAL_SCAN", default=True),
         )

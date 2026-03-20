@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import time
 from typing import Callable, Protocol
 
 from meeting_summary.models import TranscriptUtterance, TranscriptionResult
 
 LOGGER = logging.getLogger(__name__)
 ProgressCallback = Callable[[str, int, str], None]
+
+_TRANSCRIPTION_PERCENT_START = 20
+_TRANSCRIPTION_PERCENT_END = 55
+_TRANSCRIPTION_PROGRESS_STEP = 3
+_TRANSCRIPTION_HEARTBEAT_SECONDS = 15.0
+_TRANSCRIPTION_SEGMENT_HEARTBEAT = 25
 
 
 class _Diarizer(Protocol):
@@ -109,7 +116,10 @@ class Transcriber:
             20,
             "Transcribing audio with faster-whisper.",
         )
-        utterances, info = self._transcribe_segments(audio_path)
+        utterances, info = self._transcribe_segments(
+            audio_path,
+            progress_callback=progress_callback,
+        )
         _report_progress(
             progress_callback,
             "transcription_complete",
@@ -186,20 +196,32 @@ class Transcriber:
     def _transcribe_segments(
         self,
         audio_path: Path,
+        progress_callback: ProgressCallback | None = None,
     ) -> tuple[list[TranscriptUtterance], object]:
         segments, info = self.model.transcribe(
             str(audio_path),
             **self._build_decode_options(),
         )
-        utterances = [
-            TranscriptUtterance(
-                text=segment.text.strip(),
-                start_seconds=float(segment.start) if segment.start is not None else None,
-                end_seconds=float(segment.end) if segment.end is not None else None,
+        progress_reporter = _TranscriptionProgressReporter(
+            progress_callback=progress_callback,
+            total_duration_seconds=getattr(info, "duration", None),
+        )
+        utterances: list[TranscriptUtterance] = []
+        for segment_index, segment in enumerate(segments, start=1):
+            progress_reporter.on_segment(
+                segment_end_seconds=segment.end,
+                collected_segments=segment_index,
             )
-            for segment in segments
-            if segment.text.strip()
-        ]
+            text = segment.text.strip()
+            if not text:
+                continue
+            utterances.append(
+                TranscriptUtterance(
+                    text=text,
+                    start_seconds=float(segment.start) if segment.start is not None else None,
+                    end_seconds=float(segment.end) if segment.end is not None else None,
+                )
+            )
         return utterances, info
 
     def _build_decode_options(self) -> dict[str, str | int | float | bool | None]:
@@ -216,6 +238,77 @@ class Transcriber:
             decode_options["best_of"] = self.best_of
 
         return decode_options
+
+
+class _TranscriptionProgressReporter:
+    def __init__(
+        self,
+        progress_callback: ProgressCallback | None,
+        total_duration_seconds: float | None,
+    ) -> None:
+        self.progress_callback = progress_callback
+        self.total_duration_seconds = (
+            float(total_duration_seconds)
+            if total_duration_seconds is not None and total_duration_seconds > 0
+            else None
+        )
+        self._last_percent = _TRANSCRIPTION_PERCENT_START
+        self._last_reported_seconds = 0.0
+        self._last_reported_segments = 0
+        self._last_report_monotonic = time.monotonic()
+
+    def on_segment(self, segment_end_seconds: float | None, collected_segments: int) -> None:
+        if self.progress_callback is None:
+            return
+
+        now = time.monotonic()
+        if self.total_duration_seconds is not None and segment_end_seconds is not None:
+            processed_seconds = min(max(float(segment_end_seconds), 0.0), self.total_duration_seconds)
+            if processed_seconds >= self.total_duration_seconds:
+                return
+
+            percent = _transcription_progress_percent(
+                processed_seconds=processed_seconds,
+                total_duration_seconds=self.total_duration_seconds,
+            )
+            percent_advanced = percent >= self._last_percent + _TRANSCRIPTION_PROGRESS_STEP
+            heartbeat_due = (
+                now - self._last_report_monotonic >= _TRANSCRIPTION_HEARTBEAT_SECONDS
+                and processed_seconds > self._last_reported_seconds
+            )
+            if not percent_advanced and not heartbeat_due:
+                return
+
+            _report_progress(
+                self.progress_callback,
+                "transcribing_progress",
+                percent,
+                _format_duration_progress_message(processed_seconds, self.total_duration_seconds),
+            )
+            self._last_percent = max(self._last_percent, percent)
+            self._last_reported_seconds = processed_seconds
+            self._last_reported_segments = collected_segments
+            self._last_report_monotonic = now
+            return
+
+        segments_advanced = (
+            collected_segments - self._last_reported_segments >= _TRANSCRIPTION_SEGMENT_HEARTBEAT
+        )
+        heartbeat_due = (
+            now - self._last_report_monotonic >= _TRANSCRIPTION_HEARTBEAT_SECONDS
+            and collected_segments > self._last_reported_segments
+        )
+        if not segments_advanced and not heartbeat_due:
+            return
+
+        _report_progress(
+            self.progress_callback,
+            "transcribing_progress",
+            _TRANSCRIPTION_PERCENT_START,
+            f"Collected {collected_segments} transcript segments so far.",
+        )
+        self._last_reported_segments = collected_segments
+        self._last_report_monotonic = now
 
 
 def _resolve_whisper_device(device: str) -> str:
@@ -284,3 +377,26 @@ def _report_progress(
         return
 
     progress_callback(stage, percent, message)
+
+
+def _transcription_progress_percent(
+    processed_seconds: float,
+    total_duration_seconds: float,
+) -> int:
+    if total_duration_seconds <= 0:
+        return _TRANSCRIPTION_PERCENT_START
+
+    progress_ratio = min(max(processed_seconds / total_duration_seconds, 0.0), 1.0)
+    raw_percent = _TRANSCRIPTION_PERCENT_START + int(
+        progress_ratio * (_TRANSCRIPTION_PERCENT_END - _TRANSCRIPTION_PERCENT_START)
+    )
+    return max(_TRANSCRIPTION_PERCENT_START + 1, min(raw_percent, _TRANSCRIPTION_PERCENT_END - 1))
+
+
+def _format_duration_progress_message(
+    processed_seconds: float,
+    total_duration_seconds: float,
+) -> str:
+    processed_minutes = processed_seconds / 60
+    total_minutes = total_duration_seconds / 60
+    return f"Processed {processed_minutes:.1f} / {total_minutes:.1f} min of audio."

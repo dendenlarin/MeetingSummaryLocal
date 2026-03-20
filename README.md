@@ -139,6 +139,7 @@ PYANNOTE_DEVICE=auto
 CALLS_DIR=./calls
 FILE_READY_CHECKS=3
 FILE_READY_INTERVAL_SECONDS=2
+FILE_DUPLICATE_COOLDOWN_SECONDS=120
 INITIAL_SCAN=true
 ```
 
@@ -188,6 +189,8 @@ INITIAL_SCAN=true
   сколько стабильных проверок размера файла нужно до старта обработки
 - `FILE_READY_INTERVAL_SECONDS`:
   интервал между проверками готовности файла
+- `FILE_DUPLICATE_COOLDOWN_SECONDS`:
+  окно в секундах, в течение которого одинаковый `.m4a` с тем же размером и `mtime` не будет повторно обрабатываться после нового `created`/`moved` события
 - `INITIAL_SCAN`:
   обрабатывать ли существующие файлы при старте
 
@@ -197,6 +200,7 @@ INITIAL_SCAN=true
 - ошибка по одному файлу не останавливает watcher
 - если `ollama` недоступна, сервис продолжает работать и пишет ошибку в лог
 - если `.md` уже существует, файл считается обработанным
+- watcher подавляет повторную обработку того же файла в пределах `FILE_DUPLICATE_COOLDOWN_SECONDS`, если fingerprint файла не изменился
 - если diarization не настроен или упал, файл всё равно будет обработан, но без спикеров
 - для `.m4a` diarization использует ffmpeg/`faster-whisper` decode как штатный путь, а не как шумный runtime fallback
 - в логах по каждому файлу печатаются stage-based статусы прогресса обработки
@@ -216,12 +220,20 @@ INITIAL_SCAN=true
 ```text
 [record_test.m4a] 10% | processing_started | File is stable. Starting analysis.
 [record_test.m4a] 20% | transcribing | Transcribing audio with faster-whisper.
+[record_test.m4a] 34% | transcribing_progress | Processed 12.4 / 37.1 min of audio.
 [record_test.m4a] 75% | diarization_complete | Diarization finished with 2 speakers.
 [record_test.m4a] 85% | summarizing | Generating summary with Ollama.
 [record_test.m4a] 100% | completed | Saved markdown to record_test.md.
 ```
 
 Это не внутренний процент самой модели Whisper, а устойчивый прогресс по стадиям пайплайна.
+Стадия `transcribing` начинается на `20%`, а во время долгого CPU/GPU-распознавания сервис дополнительно пишет heartbeat-обновления `transcribing_progress` до `55%`, чтобы было видно, что обработка не зависла и не стартовала заново.
+
+## Troubleshooting
+
+- Если `WHISPER_VAD_FILTER=true`, в Docker/VM может появляться строка вида `onnxruntime cpuid_info warning: Unknown CPU vendor...`
+- Это benign warning от ONNXRuntime/VAD и само по себе не означает рестарт обработки файла
+- Повтор `0% -> 20%` должен происходить только при новом filesystem event, новом fingerprint файла или после истечения `FILE_DUPLICATE_COOLDOWN_SECONDS`
 
 ## Speaker Diarization
 
