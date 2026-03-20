@@ -20,6 +20,7 @@ services:
       WHISPER_BEST_OF: "${WHISPER_BEST_OF:-5}"
       WHISPER_TEMPERATURE: "${WHISPER_TEMPERATURE:-0}"
       WHISPER_VAD_FILTER: "${WHISPER_VAD_FILTER:-true}"
+      FILE_DUPLICATE_COOLDOWN_SECONDS: "${FILE_DUPLICATE_COOLDOWN_SECONDS:-120}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:

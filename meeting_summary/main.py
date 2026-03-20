@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from meeting_summary.config import Settings
@@ -9,11 +10,19 @@ from meeting_summary.processor import CallProcessor
 from meeting_summary.transcriber import Transcriber
 from meeting_summary.watcher import CallWatcher
 
+LOGGER = logging.getLogger(__name__)
+
 
 def main() -> None:
     configure_logging()
     settings = Settings.load(base_dir=Path.cwd())
     settings.calls_dir.mkdir(parents=True, exist_ok=True)
+
+    if settings.whisper_vad_filter:
+        LOGGER.info(
+            "WHISPER_VAD_FILTER is enabled. Some Docker/VM environments may print a benign "
+            "ONNXRuntime CPU vendor warning during VAD initialization; it does not restart processing."
+        )
 
     transcriber = Transcriber(
         model_name=settings.whisper_model,
@@ -44,6 +53,7 @@ def main() -> None:
         processor=processor,
         ready_checks=settings.file_ready_checks,
         ready_interval_seconds=settings.file_ready_interval_seconds,
+        duplicate_cooldown_seconds=settings.file_duplicate_cooldown_seconds,
     )
 
     if settings.initial_scan:

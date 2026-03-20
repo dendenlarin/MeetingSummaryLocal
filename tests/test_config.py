@@ -132,6 +132,22 @@ class SettingsTests(unittest.TestCase):
 
         self.assertFalse(settings.initial_scan)
 
+    def test_load_reads_duplicate_cooldown_seconds(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"FILE_DUPLICATE_COOLDOWN_SECONDS": "45"},
+            clear=True,
+        ):
+            settings = Settings.load(base_dir=self.base_dir)
+
+        self.assertEqual(settings.file_duplicate_cooldown_seconds, 45.0)
+
+    def test_load_uses_duplicate_cooldown_default(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            settings = Settings.load(base_dir=self.base_dir)
+
+        self.assertEqual(settings.file_duplicate_cooldown_seconds, 120.0)
+
 
 if __name__ == "__main__":
     unittest.main()

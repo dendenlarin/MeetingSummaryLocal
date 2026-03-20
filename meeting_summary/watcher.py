@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 from pathlib import Path
 import threading
@@ -13,6 +14,13 @@ from meeting_summary.processor import CallProcessor
 LOGGER = logging.getLogger(__name__)
 
 
+@dataclass(slots=True)
+class _RecentAttempt:
+    fingerprint: tuple[int, int]
+    timestamp_monotonic: float
+    result: str
+
+
 class CallWatcher(FileSystemEventHandler):
     def __init__(
         self,
@@ -20,27 +28,30 @@ class CallWatcher(FileSystemEventHandler):
         processor: CallProcessor,
         ready_checks: int,
         ready_interval_seconds: float,
+        duplicate_cooldown_seconds: float,
     ) -> None:
         self.calls_dir = calls_dir
         self.processor = processor
         self.ready_checks = ready_checks
         self.ready_interval_seconds = ready_interval_seconds
+        self.duplicate_cooldown_seconds = duplicate_cooldown_seconds
         self._active: set[Path] = set()
+        self._recent_attempts: dict[Path, _RecentAttempt] = {}
         self._lock = threading.Lock()
 
     def process_existing(self) -> None:
         for audio_path in sorted(self.calls_dir.glob("*.m4a")):
-            self._schedule(audio_path)
+            self._schedule(audio_path, reason="initial_scan")
 
     def on_created(self, event: FileSystemEvent) -> None:
         if event.is_directory:
             return
-        self._schedule(Path(event.src_path))
+        self._schedule(Path(event.src_path), reason="created")
 
     def on_moved(self, event: FileSystemEvent) -> None:
         if event.is_directory:
             return
-        self._schedule(Path(event.dest_path))
+        self._schedule(Path(event.dest_path), reason="moved")
 
     def serve_forever(self) -> None:
         observer = Observer()
@@ -57,33 +68,64 @@ class CallWatcher(FileSystemEventHandler):
             observer.stop()
             observer.join()
 
-    def _schedule(self, audio_path: Path) -> None:
+    def _schedule(self, audio_path: Path, reason: str) -> None:
         if audio_path.suffix.lower() != ".m4a":
             return
+        audio_path = audio_path.resolve()
 
         with self._lock:
             if audio_path in self._active:
+                LOGGER.info(
+                    "[%s] 0%% | duplicate_suppressed | Ignoring %s event because the file is already active.",
+                    audio_path.name,
+                    reason,
+                )
                 return
             self._active.add(audio_path)
 
         thread = threading.Thread(
             target=self._process_when_ready,
-            args=(audio_path,),
+            args=(audio_path, reason),
             daemon=True,
         )
         thread.start()
 
-    def _process_when_ready(self, audio_path: Path) -> None:
+    def _process_when_ready(self, audio_path: Path, reason: str) -> None:
+        audio_path = audio_path.resolve()
         try:
             LOGGER.info(
-                "[%s] 0%% | waiting_for_file | Waiting for file size to stabilize.",
+                "[%s] 0%% | waiting_for_file | Waiting for file size to stabilize (reason=%s).",
                 audio_path.name,
+                reason,
             )
             if not self._wait_until_stable(audio_path):
                 LOGGER.warning("File %s did not stabilize in time, skipping.", audio_path.name)
                 return
-            self.processor.process(audio_path)
+            fingerprint = _fingerprint(audio_path)
+            duplicate = self._recent_duplicate(audio_path, fingerprint)
+            if duplicate is not None:
+                age_seconds, previous_result = duplicate
+                LOGGER.info(
+                    "[%s] 0%% | duplicate_suppressed | Suppressed duplicate %s event for unchanged file "
+                    "(previous_result=%s, age=%.1fs).",
+                    audio_path.name,
+                    reason,
+                    previous_result,
+                    age_seconds,
+                )
+                self._remember_attempt(audio_path, fingerprint, "skipped_duplicate")
+                return
+
+            self._remember_attempt(audio_path, fingerprint, "started")
+            result = self.processor.process(audio_path)
+            self._remember_attempt(
+                audio_path,
+                fingerprint,
+                "completed" if result is not None else "skipped",
+            )
         except Exception:
+            if audio_path.exists():
+                self._remember_attempt(audio_path, _fingerprint(audio_path), "failed")
             LOGGER.exception("Failed to process %s.", audio_path.name)
         finally:
             with self._lock:
@@ -107,3 +149,38 @@ class CallWatcher(FileSystemEventHandler):
             time.sleep(self.ready_interval_seconds)
 
         return True
+
+    def _recent_duplicate(
+        self,
+        audio_path: Path,
+        fingerprint: tuple[int, int],
+    ) -> tuple[float, str] | None:
+        with self._lock:
+            recent_attempt = self._recent_attempts.get(audio_path)
+
+        if recent_attempt is None or recent_attempt.fingerprint != fingerprint:
+            return None
+
+        age_seconds = time.monotonic() - recent_attempt.timestamp_monotonic
+        if age_seconds > self.duplicate_cooldown_seconds:
+            return None
+
+        return age_seconds, recent_attempt.result
+
+    def _remember_attempt(
+        self,
+        audio_path: Path,
+        fingerprint: tuple[int, int],
+        result: str,
+    ) -> None:
+        with self._lock:
+            self._recent_attempts[audio_path] = _RecentAttempt(
+                fingerprint=fingerprint,
+                timestamp_monotonic=time.monotonic(),
+                result=result,
+            )
+
+
+def _fingerprint(audio_path: Path) -> tuple[int, int]:
+    stat_result = audio_path.stat()
+    return stat_result.st_size, stat_result.st_mtime_ns

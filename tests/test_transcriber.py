@@ -175,6 +175,88 @@ class TranscriberTests(unittest.TestCase):
 
         self.assertEqual(init_calls, [("large-v3", "cuda", "float16")])
 
+    def test_transcribe_reports_intermediate_progress_when_duration_is_known(self) -> None:
+        init_calls: list[tuple[str, str, str]] = []
+        fake_model = _FakeModel(
+            init_calls,
+            segments=[
+                _FakeSegment("первый", 0.0, 2.0),
+                _FakeSegment("второй", 2.0, 5.0),
+                _FakeSegment("третий", 5.0, 10.0),
+            ],
+            info=SimpleNamespace(language="ru", duration=10.0),
+        )
+
+        class _FakeWhisperModel:
+            def __init__(self, name: str, device: str, compute_type: str) -> None:
+                init_calls.append((name, device, compute_type))
+
+            def transcribe(self, audio_path: str, **kwargs: object):
+                return fake_model.transcribe(audio_path, **kwargs)
+
+        fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+        progress_events: list[tuple[str, int, str]] = []
+
+        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
+            transcriber = Transcriber(model_name="large-v3", device="cpu")
+            transcriber.transcribe(
+                Path("progress-demo.m4a"),
+                progress_callback=lambda stage, percent, message: progress_events.append(
+                    (stage, percent, message)
+                ),
+            )
+
+        self.assertEqual(
+            progress_events,
+            [
+                ("transcribing", 20, "Transcribing audio with faster-whisper."),
+                ("transcribing_progress", 27, "Processed 0.0 / 0.2 min of audio."),
+                ("transcribing_progress", 37, "Processed 0.1 / 0.2 min of audio."),
+                ("transcription_complete", 55, "Collected 3 transcript segments."),
+                ("diarization_skipped", 75, "Diarization disabled."),
+            ],
+        )
+
+    def test_transcribe_reports_safe_heartbeat_without_total_duration(self) -> None:
+        init_calls: list[tuple[str, str, str]] = []
+        segments = [
+            _FakeSegment(f"сегмент {index}", float(index), float(index + 1))
+            for index in range(25)
+        ]
+        fake_model = _FakeModel(
+            init_calls,
+            segments=segments,
+            info=SimpleNamespace(language="ru", duration=None),
+        )
+
+        class _FakeWhisperModel:
+            def __init__(self, name: str, device: str, compute_type: str) -> None:
+                init_calls.append((name, device, compute_type))
+
+            def transcribe(self, audio_path: str, **kwargs: object):
+                return fake_model.transcribe(audio_path, **kwargs)
+
+        fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+        progress_events: list[tuple[str, int, str]] = []
+
+        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
+            transcriber = Transcriber(model_name="large-v3", device="cpu")
+            transcriber.transcribe(
+                Path("progress-fallback.m4a"),
+                progress_callback=lambda stage, percent, message: progress_events.append(
+                    (stage, percent, message)
+                ),
+            )
+
+        self.assertIn(
+            (
+                "transcribing_progress",
+                20,
+                "Collected 25 transcript segments so far.",
+            ),
+            progress_events,
+        )
+
     def test_transcribe_passes_quality_overrides_and_vad(self) -> None:
         init_calls: list[tuple[str, str, str]] = []
         fake_model = _FakeModel(
