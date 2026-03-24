@@ -6,6 +6,7 @@ from pathlib import Path
 import threading
 import time
 
+from meeting_summary.markdown_writer import markdown_path_for
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
@@ -105,16 +106,17 @@ class CallWatcher(FileSystemEventHandler):
             duplicate = self._recent_duplicate(audio_path, fingerprint)
             if duplicate is not None:
                 age_seconds, previous_result = duplicate
-                LOGGER.info(
-                    "[%s] 0%% | duplicate_suppressed | Suppressed duplicate %s event for unchanged file "
-                    "(previous_result=%s, age=%.1fs).",
-                    audio_path.name,
-                    reason,
-                    previous_result,
-                    age_seconds,
-                )
-                self._remember_attempt(audio_path, fingerprint, "skipped_duplicate")
-                return
+                if not self._should_allow_retry(audio_path, previous_result):
+                    LOGGER.info(
+                        "[%s] 0%% | duplicate_suppressed | Suppressed duplicate %s event for unchanged file "
+                        "(previous_result=%s, age=%.1fs).",
+                        audio_path.name,
+                        reason,
+                        previous_result,
+                        age_seconds,
+                    )
+                    self._remember_attempt(audio_path, fingerprint, "skipped_duplicate")
+                    return
 
             self._remember_attempt(audio_path, fingerprint, "started")
             result = self.processor.process(audio_path)
@@ -167,6 +169,16 @@ class CallWatcher(FileSystemEventHandler):
 
         return age_seconds, recent_attempt.result
 
+    def _should_allow_retry(
+        self,
+        audio_path: Path,
+        previous_result: str,
+    ) -> bool:
+        if previous_result not in {"completed", "skipped"}:
+            return False
+
+        return not markdown_path_for(audio_path).exists()
+
     def _remember_attempt(
         self,
         audio_path: Path,
@@ -174,11 +186,21 @@ class CallWatcher(FileSystemEventHandler):
         result: str,
     ) -> None:
         with self._lock:
+            self._prune_recent_attempts_locked(time.monotonic())
             self._recent_attempts[audio_path] = _RecentAttempt(
                 fingerprint=fingerprint,
                 timestamp_monotonic=time.monotonic(),
                 result=result,
             )
+
+    def _prune_recent_attempts_locked(self, now_monotonic: float) -> None:
+        stale_paths = [
+            path
+            for path, attempt in self._recent_attempts.items()
+            if now_monotonic - attempt.timestamp_monotonic > self.duplicate_cooldown_seconds
+        ]
+        for stale_path in stale_paths:
+            self._recent_attempts.pop(stale_path, None)
 
 
 def _fingerprint(audio_path: Path) -> tuple[int, int]:
