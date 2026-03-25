@@ -7,7 +7,7 @@ from meeting_summary.config import Settings
 from meeting_summary.logging_utils import configure_logging
 from meeting_summary.ollama_client import OllamaClient
 from meeting_summary.processor import CallProcessor
-from meeting_summary.transcriber import Transcriber
+from meeting_summary.transcriber import DiarizationConfigurationError, Transcriber
 from meeting_summary.watcher import CallWatcher
 
 LOGGER = logging.getLogger(__name__)
@@ -20,25 +20,30 @@ def main() -> None:
 
     if settings.whisper_vad_filter:
         LOGGER.info(
-            "WHISPER_VAD_FILTER is enabled. Some Docker/VM environments may print a benign "
-            "ONNXRuntime CPU vendor warning during VAD initialization; it does not restart processing."
+            "WHISPER_VAD_FILTER is enabled. Some Docker/VM environments may print a native "
+            "ONNXRuntime CPU vendor warning during VAD initialization. This warning comes from "
+            "the VAD runtime itself and does not restart or invalidate transcription."
         )
 
-    transcriber = Transcriber(
-        model_name=settings.whisper_model,
-        device=settings.whisper_device,
-        compute_type=settings.whisper_compute_type,
-        language=settings.whisper_language,
-        initial_prompt=settings.whisper_initial_prompt,
-        terms=settings.whisper_terms,
-        beam_size=settings.whisper_beam_size,
-        best_of=settings.whisper_best_of,
-        temperature=settings.whisper_temperature,
-        vad_filter=settings.whisper_vad_filter,
-        enable_diarization=settings.enable_diarization,
-        diarization_auth_token=settings.hf_token,
-        diarization_device=settings.pyannote_device,
-    )
+    try:
+        transcriber = Transcriber(
+            model_name=settings.whisper_model,
+            device=settings.whisper_device,
+            compute_type=settings.whisper_compute_type,
+            language=settings.whisper_language,
+            initial_prompt=settings.whisper_initial_prompt,
+            terms=settings.whisper_terms,
+            beam_size=settings.whisper_beam_size,
+            best_of=settings.whisper_best_of,
+            temperature=settings.whisper_temperature,
+            vad_filter=settings.whisper_vad_filter,
+            enable_diarization=settings.enable_diarization,
+            diarization_auth_token=settings.hf_token,
+            diarization_device=settings.pyannote_device,
+        )
+    except DiarizationConfigurationError as exc:
+        LOGGER.error("%s", exc)
+        raise SystemExit(1) from exc
     ollama_client = OllamaClient(
         base_url=settings.ollama_base_url,
         model=settings.ollama_model,

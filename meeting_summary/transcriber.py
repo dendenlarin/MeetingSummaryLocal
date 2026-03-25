@@ -17,6 +17,10 @@ _TRANSCRIPTION_HEARTBEAT_SECONDS = 15.0
 _TRANSCRIPTION_SEGMENT_HEARTBEAT = 25
 
 
+class DiarizationConfigurationError(RuntimeError):
+    """Raised when diarization is enabled but runtime dependencies are misconfigured."""
+
+
 class _Diarizer(Protocol):
     def diarize(self, audio_path: Path) -> list[object]:
         ...
@@ -88,22 +92,17 @@ class Transcriber:
                     device=diarization_device,
                 )
             except ModuleNotFoundError as exc:
-                self._diarization_unavailable_message = (
-                    "Diarization unavailable; optional dependencies are not installed."
-                )
-                LOGGER.warning(
-                    "Diarization is enabled but optional dependencies are missing (%s). "
-                    "Install them with `pip install -e .[diarization]`. Falling back to plain transcript mode.",
-                    exc.name or str(exc),
-                )
-            except Exception:
-                self._diarization_unavailable_message = (
-                    "Diarization unavailable; continuing without speaker labels."
-                )
-                LOGGER.warning(
-                    "Failed to initialize pyannote diarization. Falling back to plain transcript mode.",
-                    exc_info=True,
-                )
+                raise DiarizationConfigurationError(
+                    "ENABLE_DIARIZATION=true, but optional diarization dependencies are missing "
+                    f"({exc.name or str(exc)}). Install `meeting-summary[diarization]` locally "
+                    "or rebuild the Docker image with diarization support."
+                ) from exc
+            except Exception as exc:
+                raise DiarizationConfigurationError(
+                    "ENABLE_DIARIZATION=true, but pyannote diarization failed to initialize. "
+                    "Verify `HF_TOKEN`, Hugging Face access to `pyannote/segmentation-3.0` and "
+                    "`pyannote/speaker-diarization-3.1`, and the container/runtime dependencies."
+                ) from exc
 
     def transcribe(
         self,
