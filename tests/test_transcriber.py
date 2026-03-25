@@ -53,56 +53,51 @@ class TranscriberTests(unittest.TestCase):
         self.assertEqual(init_calls, [("large-v3", "cpu", "int8")])
         diarization_support_mock.assert_not_called()
 
-    def test_transcriber_falls_back_when_diarization_extra_is_missing(self) -> None:
+    def test_transcriber_fails_fast_when_diarization_extra_is_missing(self) -> None:
         init_calls: list[tuple[str, str, str]] = []
-        fake_model = _FakeModel(
-            init_calls,
-            segments=[_FakeSegment("тест", 0.0, 1.0)],
-            info=SimpleNamespace(language="ru", duration=1.0),
-        )
-
         class _FakeWhisperModel:
             def __init__(self, name: str, device: str, compute_type: str) -> None:
                 init_calls.append((name, device, compute_type))
 
-            def transcribe(self, audio_path: str, **kwargs: object):
-                return fake_model.transcribe(audio_path, **kwargs)
-
         fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
-        progress_events: list[tuple[str, int, str]] = []
 
         with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
             with patch(
                 "meeting_summary.transcriber._create_diarization_support",
                 side_effect=ModuleNotFoundError("No module named 'pyannote.audio'"),
             ):
-                with self.assertLogs("meeting_summary.transcriber", level="WARNING") as captured_logs:
+                with self.assertRaisesRegex(RuntimeError, "optional diarization dependencies are missing"):
                     transcriber = Transcriber(
                         model_name="large-v3",
                         device="cpu",
                         enable_diarization=True,
                     )
-                    transcriber.transcribe(
-                        Path("demo.m4a"),
-                        progress_callback=lambda stage, percent, message: progress_events.append(
-                            (stage, percent, message)
-                        ),
+
+        self.assertEqual(init_calls, [("large-v3", "cpu", "int8")])
+
+    def test_transcriber_fails_fast_when_diarization_pipeline_init_fails(self) -> None:
+        init_calls: list[tuple[str, str, str]] = []
+
+        class _FakeWhisperModel:
+            def __init__(self, name: str, device: str, compute_type: str) -> None:
+                init_calls.append((name, device, compute_type))
+
+        fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+
+        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
+            with patch(
+                "meeting_summary.transcriber._create_diarization_support",
+                side_effect=RuntimeError("401 Unauthorized"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "pyannote diarization failed to initialize"):
+                    Transcriber(
+                        model_name="large-v3",
+                        device="cpu",
+                        enable_diarization=True,
+                        diarization_auth_token="hf_test",
                     )
 
         self.assertEqual(init_calls, [("large-v3", "cpu", "int8")])
-        self.assertIn("optional dependencies are missing", "\n".join(captured_logs.output))
-        self.assertEqual(
-            progress_events,
-            [
-                ("transcribing", 20, "Transcribing audio with faster-whisper."),
-                ("transcription_complete", 55, "Collected 1 transcript segments."),
-                (
-                    "diarization_skipped",
-                    75,
-                    "Diarization unavailable; optional dependencies are not installed.",
-                ),
-            ],
-        )
 
     def test_transcribe_maps_faster_whisper_segments_to_result(self) -> None:
         init_calls: list[tuple[str, str, str]] = []

@@ -49,7 +49,7 @@ calls/demo.md
 - локально запущенный `ollama`
 - хотя бы одна доступная модель в `ollama`
 - достаточно CPU или GPU для запуска `faster-whisper`
-- для diarization: optional extra `.[diarization]`, модель `pyannote` и, как правило, токен Hugging Face для первой загрузки
+- для diarization: optional extra `.[diarization]` для локального запуска, модель `pyannote` и, как правило, токен Hugging Face для первой загрузки
 
 `faster-whisper` работает полностью локально и бесплатно, без обращения к API OpenAI. Для русскоязычных звонков quality-default в этом проекте это `large-v3`: это мультиязычная модель, в отличие от `distil-large-v3`, который не подходит как default для русского контура.
 
@@ -99,12 +99,46 @@ pip install -e .[diarization]
 docker compose up --build -d
 ```
 
+Docker-образ устанавливает diarization-зависимости сразу во время сборки, поэтому при `ENABLE_DIARIZATION=true` контейнер не должен молча работать без спикеров из-за отсутствующего `pyannote`.
+Если `pyannote` не инициализируется из-за токена, непринятого model access или runtime-проблемы, сервис завершится на старте с явной ошибкой конфигурации.
+
 Полезные команды:
 
 ```bash
 docker compose logs -f meeting-summary
 docker compose down
 ```
+
+## Как обновиться после изменений в репозитории
+
+Если проект уже локально скачан и контейнер раньше уже запускался, базовый сценарий обновления такой:
+
+```bash
+git switch main
+git fetch origin
+git pull --ff-only origin main
+docker compose up --build -d
+docker compose logs -f meeting-summary
+```
+
+Что делают команды:
+
+- `git fetch origin` обновляет ссылки на удалённые ветки
+- `git pull --ff-only origin main` подтягивает свежий `main` без merge-коммита
+- `docker compose up --build -d` пересобирает локальный образ из обновлённого кода и перезапускает контейнер
+
+Если у вас есть локальные незакоммиченные изменения, сначала временно уберите их в stash:
+
+```bash
+git stash push -u
+git switch main
+git fetch origin
+git pull --ff-only origin main
+docker compose up --build -d
+git stash pop
+```
+
+`docker compose pull` здесь не нужен: образ не скачивается из registry, а собирается локально из текущего состояния репозитория.
 
 В Docker сервис автоматически использует:
 
@@ -179,6 +213,7 @@ INITIAL_SCAN=true
 - `ENABLE_DIARIZATION`:
   включает speaker diarization через `pyannote`
 - пустое значение трактуется как `false`
+- если значение `true`, сервис ожидает, что `pyannote` и связанные зависимости доступны уже на старте; при misconfig он завершится с ошибкой, а не продолжит работу без спикеров
 - `HF_TOKEN`:
   токен Hugging Face для первой загрузки модели diarization; если модель уже закеширована локально, может не понадобиться
 - `PYANNOTE_DEVICE`:
@@ -201,7 +236,8 @@ INITIAL_SCAN=true
 - если `ollama` недоступна, сервис продолжает работать и пишет ошибку в лог
 - если `.md` уже существует, файл считается обработанным
 - watcher подавляет повторную обработку того же файла в пределах `FILE_DUPLICATE_COOLDOWN_SECONDS`, если fingerprint файла не изменился
-- если diarization не настроен или упал, файл всё равно будет обработан, но без спикеров
+- если `ENABLE_DIARIZATION=true`, но `pyannote`/`HF_TOKEN`/доступ к моделям настроены некорректно, сервис завершится на старте с понятной ошибкой конфигурации
+- если diarization включен, но конкретный файл слишком короткий или пустой для надежного speaker split, сервис пропустит diarization только для этого файла и продолжит обработку без спикеров
 - для `.m4a` diarization использует ffmpeg/`faster-whisper` decode как штатный путь, а не как шумный runtime fallback
 - в логах по каждому файлу печатаются stage-based статусы прогресса обработки
 
@@ -232,7 +268,9 @@ INITIAL_SCAN=true
 ## Troubleshooting
 
 - Если `WHISPER_VAD_FILTER=true`, в Docker/VM может появляться строка вида `onnxruntime cpuid_info warning: Unknown CPU vendor...`
-- Это benign warning от ONNXRuntime/VAD и само по себе не означает рестарт обработки файла
+- Это native warning сторонней библиотеки ONNXRuntime/VAD, а не ошибка пайплайна обработки файла
+- Если после этой строки лог доходит до `transcription_complete` и `completed`, распознавание отработало штатно
+- Если нужна полностью тихая лог-лента без этой строки, единственный надежный вариант сейчас: `WHISPER_VAD_FILTER=false`
 - Повтор `0% -> 20%` должен происходить только при новом filesystem event, новом fingerprint файла или после истечения `FILE_DUPLICATE_COOLDOWN_SECONDS`
 
 ## Speaker Diarization
@@ -256,7 +294,7 @@ PYANNOTE_DEVICE=auto
 - создать `HF_TOKEN` с правами чтения
 
 После первой успешной загрузки модель остаётся в локальном кэше, поэтому на той же машине diarization обычно может работать оффлайн.
-Если `ENABLE_DIARIZATION=true`, но optional extra не установлен или `pyannote` не инициализировался, сервис продолжит обработку файла без спикеров и запишет warning в лог.
+Если `ENABLE_DIARIZATION=true`, но `pyannote` не установлен в окружении контейнера/venv или не инициализировался, сервис завершится на старте с явной ошибкой конфигурации. Это сделано специально, чтобы не было ложного впечатления, что speaker diarization работает.
 
 После этого раздел `## Transcript` будет выглядеть примерно так:
 

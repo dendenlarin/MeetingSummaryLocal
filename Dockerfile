@@ -13,6 +13,6 @@ RUN apt-get update \
 COPY constraints-docker.txt pyproject.toml README.md ./
 COPY meeting_summary ./meeting_summary
 
-RUN pip install --constraint constraints-docker.txt .
+RUN pip install --constraint constraints-docker.txt ".[diarization]"
 
 CMD ["meeting-summary"]

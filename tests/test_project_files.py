@@ -40,6 +40,11 @@ class ProjectFilesTests(unittest.TestCase):
         self.assertFalse(any(dep.startswith("pyannote.audio") for dep in dependencies))
         self.assertTrue(any(dep.startswith("pyannote.audio") for dep in optional_dependencies))
 
+    def test_dockerfile_installs_diarization_extra(self) -> None:
+        dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+        self.assertIn('pip install --constraint constraints-docker.txt ".[diarization]"', dockerfile)
+
 
 if __name__ == "__main__":
     unittest.main()
