@@ -75,7 +75,6 @@ class Settings:
     whisper_best_of: int
     whisper_temperature: float
     whisper_vad_filter: bool
-    enable_diarization: bool
     hf_token: str | None
     pyannote_device: str
     file_ready_checks: int
@@ -93,9 +92,7 @@ class Settings:
             ollama_model=os.getenv("OLLAMA_MODEL", "auto"),
             ollama_base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
             ollama_prompt_path=_resolve_ollama_prompt_path(root),
-            whisper_model=os.getenv("WHISPER_MODEL")
-            or os.getenv("WHISPER_MODEL_SIZE")
-            or "large-v3",
+            whisper_model=os.getenv("WHISPER_MODEL", "medium"),
             whisper_device=os.getenv("WHISPER_DEVICE", "auto"),
             whisper_compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "auto"),
             whisper_language=os.getenv("WHISPER_LANGUAGE") or None,
@@ -105,7 +102,6 @@ class Settings:
             whisper_best_of=int(os.getenv("WHISPER_BEST_OF", "5")),
             whisper_temperature=float(os.getenv("WHISPER_TEMPERATURE", "0")),
             whisper_vad_filter=_env_flag("WHISPER_VAD_FILTER", default=True),
-            enable_diarization=_env_flag("ENABLE_DIARIZATION", default=False),
             hf_token=os.getenv("HF_TOKEN") or None,
             pyannote_device=os.getenv("PYANNOTE_DEVICE", "auto"),
             file_ready_checks=int(os.getenv("FILE_READY_CHECKS", "3")),

@@ -12,6 +12,19 @@ from meeting_summary.models import TranscriptUtterance
 LOGGER = logging.getLogger(__name__)
 _FASTER_WHISPER_PRIMARY_SUFFIXES = {".aac", ".m4a", ".m4b", ".mp3", ".mp4"}
 _MIN_DIARIZATION_DURATION_SECONDS = 1.0
+DEFAULT_PYANNOTE_MODEL = "pyannote/speaker-diarization-community-1"
+_TORCHCODEC_WARNING_PATTERN = r".*torchcodec is not installed correctly.*"
+
+warnings.filterwarnings(
+    "ignore",
+    message=_TORCHCODEC_WARNING_PATTERN,
+    category=UserWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    category=UserWarning,
+    module=r"pyannote\.audio\.core\.io",
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -107,9 +120,15 @@ class PyannoteDiarizer:
         self,
         auth_token: str | None = None,
         device: str = "auto",
-        model_name: str = "pyannote/speaker-diarization-3.1",
+        model_name: str = DEFAULT_PYANNOTE_MODEL,
     ) -> None:
-        from pyannote.audio import Pipeline
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=_TORCHCODEC_WARNING_PATTERN,
+                category=UserWarning,
+            )
+            from pyannote.audio import Pipeline
 
         self.pipeline = _load_pipeline(
             pipeline_cls=Pipeline,
@@ -229,6 +248,12 @@ def _resolve_annotation(output: Any) -> Any:
 
 
 def _load_pipeline(pipeline_cls: Any, model_name: str, auth_token: str | None) -> Any:
+    if not auth_token:
+        raise RuntimeError(
+            f"HF_TOKEN is required for `{model_name}`. Accept the model conditions on "
+            "Hugging Face and put the token into `.env`."
+        )
+
     parameters = signature(pipeline_cls.from_pretrained).parameters
     kwargs: dict[str, Any] = {}
 
@@ -237,4 +262,10 @@ def _load_pipeline(pipeline_cls: Any, model_name: str, auth_token: str | None) -
     elif "use_auth_token" in parameters:
         kwargs["use_auth_token"] = auth_token or None
 
-    return pipeline_cls.from_pretrained(model_name, **kwargs)
+    try:
+        return pipeline_cls.from_pretrained(model_name, **kwargs)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not load `{model_name}`. Accept its access conditions on Hugging Face "
+            "and verify that `HF_TOKEN` in `.env` has permission to read it."
+        ) from exc

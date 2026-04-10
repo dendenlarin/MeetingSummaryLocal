@@ -33,8 +33,32 @@ class _FakeModel:
         return iter(self.segments), self.info
 
 
+class _FakeDiarizer:
+    def __init__(self, speaker_turns: list[object] | None = None, *, error: Exception | None = None) -> None:
+        self.speaker_turns = speaker_turns or []
+        self.error = error
+
+    def diarize(self, audio_path: Path) -> list[object]:
+        if self.error is not None:
+            raise self.error
+        return self.speaker_turns
+
+
 class TranscriberTests(unittest.TestCase):
-    def test_transcriber_does_not_initialize_diarization_when_disabled(self) -> None:
+    def setUp(self) -> None:
+        self.fake_diarizer = _FakeDiarizer()
+        self.create_diarization_support_patcher = patch(
+            "meeting_summary.transcriber._create_diarization_support",
+            return_value=(
+                self.fake_diarizer,
+                lambda utterances, speaker_turns: utterances,
+                RuntimeError,
+            ),
+        )
+        self.create_diarization_support_mock = self.create_diarization_support_patcher.start()
+        self.addCleanup(self.create_diarization_support_patcher.stop)
+
+    def test_transcriber_logs_guidance_for_heavy_cpu_runtime(self) -> None:
         init_calls: list[tuple[str, str, str]] = []
 
         class _FakeWhisperModel:
@@ -44,17 +68,56 @@ class TranscriberTests(unittest.TestCase):
         fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
 
         with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
-            with patch(
-                "meeting_summary.transcriber._create_diarization_support",
-                side_effect=AssertionError("diarization helper should not be called"),
-            ) as diarization_support_mock:
-                Transcriber(model_name="large-v3", device="cpu", enable_diarization=False)
+            with self.assertLogs("meeting_summary.transcriber", level="WARNING") as captured_logs:
+                Transcriber(
+                    model_name="large-v3",
+                    device="cpu",
+                )
 
         self.assertEqual(init_calls, [("large-v3", "cpu", "int8")])
-        diarization_support_mock.assert_not_called()
+        self.assertIn("Long recordings can stay at 20%", captured_logs.output[0])
+        self.assertIn("resource-heavy", captured_logs.output[1])
 
-    def test_transcriber_fails_fast_when_diarization_extra_is_missing(self) -> None:
+    def test_transcriber_warns_when_cpu_uses_default_compute_type(self) -> None:
         init_calls: list[tuple[str, str, str]] = []
+
+        class _FakeWhisperModel:
+            def __init__(self, name: str, device: str, compute_type: str) -> None:
+                init_calls.append((name, device, compute_type))
+
+        fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+
+        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
+            with self.assertLogs("meeting_summary.transcriber", level="WARNING") as captured_logs:
+                Transcriber(
+                    model_name="medium",
+                    device="cpu",
+                    compute_type="default",
+                )
+
+        self.assertEqual(init_calls, [("medium", "cpu", "default")])
+        self.assertIn("compute_type=default", captured_logs.output[0])
+
+    def test_transcriber_initializes_diarization_support(self) -> None:
+        init_calls: list[tuple[str, str, str]] = []
+
+        class _FakeWhisperModel:
+            def __init__(self, name: str, device: str, compute_type: str) -> None:
+                init_calls.append((name, device, compute_type))
+
+        fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+
+        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
+            with self.assertLogs("meeting_summary.transcriber", level="WARNING") as captured_logs:
+                Transcriber(model_name="large-v3", device="cpu")
+
+        self.assertEqual(init_calls, [("large-v3", "cpu", "int8")])
+        self.assertIn("Long recordings can stay at 20%", captured_logs.output[0])
+        self.create_diarization_support_mock.assert_called_once()
+
+    def test_transcriber_fails_fast_when_diarization_dependency_is_missing(self) -> None:
+        init_calls: list[tuple[str, str, str]] = []
+
         class _FakeWhisperModel:
             def __init__(self, name: str, device: str, compute_type: str) -> None:
                 init_calls.append((name, device, compute_type))
@@ -66,11 +129,10 @@ class TranscriberTests(unittest.TestCase):
                 "meeting_summary.transcriber._create_diarization_support",
                 side_effect=ModuleNotFoundError("No module named 'pyannote.audio'"),
             ):
-                with self.assertRaisesRegex(RuntimeError, "optional diarization dependencies are missing"):
-                    transcriber = Transcriber(
+                with self.assertRaisesRegex(RuntimeError, "Diarization dependencies are missing"):
+                    Transcriber(
                         model_name="large-v3",
                         device="cpu",
-                        enable_diarization=True,
                     )
 
         self.assertEqual(init_calls, [("large-v3", "cpu", "int8")])
@@ -87,13 +149,17 @@ class TranscriberTests(unittest.TestCase):
         with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
             with patch(
                 "meeting_summary.transcriber._create_diarization_support",
-                side_effect=RuntimeError("401 Unauthorized"),
+                side_effect=RuntimeError(
+                    "Could not load `pyannote/speaker-diarization-community-1`."
+                ),
             ):
-                with self.assertRaisesRegex(RuntimeError, "pyannote diarization failed to initialize"):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "speaker-diarization-community-1",
+                ):
                     Transcriber(
                         model_name="large-v3",
                         device="cpu",
-                        enable_diarization=True,
                         diarization_auth_token="hf_test",
                     )
 
@@ -151,8 +217,8 @@ class TranscriberTests(unittest.TestCase):
         init_calls: list[tuple[str, str, str]] = []
         fake_model = _FakeModel(
             init_calls,
-            segments=[_FakeSegment("тест", 0.0, 1.0)],
-            info=SimpleNamespace(language="ru", duration=1.0),
+            segments=[_FakeSegment("Hello", 0.0, 1.0)],
+            info=SimpleNamespace(language="en", duration=1.0),
         )
 
         class _FakeWhisperModel:
@@ -163,23 +229,23 @@ class TranscriberTests(unittest.TestCase):
                 return fake_model.transcribe(audio_path, **kwargs)
 
         fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+        fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: True))
 
-        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
-            transcriber = Transcriber(model_name="large-v3", device="cuda")
-            transcriber.transcribe(Path("gpu-demo.m4a"))
+        with patch.dict(
+            "sys.modules",
+            {"faster_whisper": fake_faster_whisper, "torch": fake_torch},
+        ):
+            transcriber = Transcriber(model_name="large-v3", device="auto")
+            result = transcriber.transcribe(Path("demo.wav"))
 
         self.assertEqual(init_calls, [("large-v3", "cuda", "float16")])
+        self.assertEqual(result.language, "en")
 
-    def test_transcribe_reports_intermediate_progress_when_duration_is_known(self) -> None:
+    def test_transcribe_uses_language_and_initial_prompt_when_provided(self) -> None:
         init_calls: list[tuple[str, str, str]] = []
         fake_model = _FakeModel(
             init_calls,
-            segments=[
-                _FakeSegment("первый", 0.0, 2.0),
-                _FakeSegment("второй", 2.0, 5.0),
-                _FakeSegment("третий", 5.0, 10.0),
-            ],
-            info=SimpleNamespace(language="ru", duration=10.0),
+            segments=[_FakeSegment("Привет", 0.0, 0.5)],
         )
 
         class _FakeWhisperModel:
@@ -190,119 +256,41 @@ class TranscriberTests(unittest.TestCase):
                 return fake_model.transcribe(audio_path, **kwargs)
 
         fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
-        progress_events: list[tuple[str, int, str]] = []
+        fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
 
-        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
-            transcriber = Transcriber(model_name="large-v3", device="cpu")
-            transcriber.transcribe(
-                Path("progress-demo.m4a"),
-                progress_callback=lambda stage, percent, message: progress_events.append(
-                    (stage, percent, message)
-                ),
-            )
-
-        self.assertEqual(
-            progress_events,
-            [
-                ("transcribing", 20, "Transcribing audio with faster-whisper."),
-                ("transcribing_progress", 27, "Processed 0.0 / 0.2 min of audio."),
-                ("transcribing_progress", 37, "Processed 0.1 / 0.2 min of audio."),
-                ("transcription_complete", 55, "Collected 3 transcript segments."),
-                ("diarization_skipped", 75, "Diarization disabled."),
-            ],
-        )
-
-    def test_transcribe_reports_safe_heartbeat_without_total_duration(self) -> None:
-        init_calls: list[tuple[str, str, str]] = []
-        segments = [
-            _FakeSegment(f"сегмент {index}", float(index), float(index + 1))
-            for index in range(25)
-        ]
-        fake_model = _FakeModel(
-            init_calls,
-            segments=segments,
-            info=SimpleNamespace(language="ru", duration=None),
-        )
-
-        class _FakeWhisperModel:
-            def __init__(self, name: str, device: str, compute_type: str) -> None:
-                init_calls.append((name, device, compute_type))
-
-            def transcribe(self, audio_path: str, **kwargs: object):
-                return fake_model.transcribe(audio_path, **kwargs)
-
-        fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
-        progress_events: list[tuple[str, int, str]] = []
-
-        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
-            transcriber = Transcriber(model_name="large-v3", device="cpu")
-            transcriber.transcribe(
-                Path("progress-fallback.m4a"),
-                progress_callback=lambda stage, percent, message: progress_events.append(
-                    (stage, percent, message)
-                ),
-            )
-
-        self.assertIn(
-            (
-                "transcribing_progress",
-                20,
-                "Collected 25 transcript segments so far.",
-            ),
-            progress_events,
-        )
-
-    def test_transcribe_passes_quality_overrides_and_vad(self) -> None:
-        init_calls: list[tuple[str, str, str]] = []
-        fake_model = _FakeModel(
-            init_calls,
-            segments=[_FakeSegment("backend deploy", 0.0, 1.0)],
-            info=SimpleNamespace(language="ru", duration=1.0),
-        )
-
-        class _FakeWhisperModel:
-            def __init__(self, name: str, device: str, compute_type: str) -> None:
-                init_calls.append((name, device, compute_type))
-
-            def transcribe(self, audio_path: str, **kwargs: object):
-                return fake_model.transcribe(audio_path, **kwargs)
-
-        fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
-
-        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
+        with patch.dict(
+            "sys.modules",
+            {"faster_whisper": fake_faster_whisper, "torch": fake_torch},
+        ):
             transcriber = Transcriber(
                 model_name="large-v3",
-                device="cpu",
-                compute_type="int8",
+                device="auto",
                 language="ru",
-                initial_prompt="Docker, GitHub, backend, deploy",
+                initial_prompt="Компания OpenAI, Ollama",
                 beam_size=7,
-                best_of=6,
-                temperature=0.0,
-                vad_filter=True,
             )
-            transcriber.transcribe(Path("quality-demo.m4a"))
+            result = transcriber.transcribe(Path("demo.m4a"))
 
+        self.assertEqual(result.transcript, "Привет")
         self.assertEqual(
             fake_model.calls[0],
             {
-                "audio_path": "quality-demo.m4a",
+                "audio_path": "demo.m4a",
                 "language": "ru",
                 "task": "transcribe",
                 "temperature": 0.0,
                 "condition_on_previous_text": True,
-                "initial_prompt": "Docker, GitHub, backend, deploy",
+                "initial_prompt": "Компания OpenAI, Ollama",
                 "vad_filter": True,
                 "beam_size": 7,
             },
         )
 
-    def test_transcribe_builds_short_glossary_prompt_from_terms(self) -> None:
+    def test_transcribe_builds_initial_prompt_from_terms_when_prompt_is_missing(self) -> None:
         init_calls: list[tuple[str, str, str]] = []
         fake_model = _FakeModel(
             init_calls,
-            segments=[_FakeSegment("Docker deploy", 0.0, 1.0)],
-            info=SimpleNamespace(language="ru", duration=1.0),
+            segments=[_FakeSegment("Привет", 0.0, 0.5)],
         )
 
         class _FakeWhisperModel:
@@ -313,24 +301,26 @@ class TranscriberTests(unittest.TestCase):
                 return fake_model.transcribe(audio_path, **kwargs)
 
         fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+        fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
 
-        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
+        with patch.dict(
+            "sys.modules",
+            {"faster_whisper": fake_faster_whisper, "torch": fake_torch},
+        ):
             transcriber = Transcriber(
                 model_name="large-v3",
-                device="cpu",
-                language="ru",
-                terms=("Docker", "GitHub", "API", "deploy"),
+                device="auto",
+                terms=("OpenAI", "Ollama", "OpenAI"),
             )
-            transcriber.transcribe(Path("glossary-demo.m4a"))
+            transcriber.transcribe(Path("demo.m4a"))
 
-        self.assertEqual(fake_model.calls[0]["initial_prompt"], "Docker, GitHub, API, deploy")
+        self.assertEqual(fake_model.calls[0]["initial_prompt"], "OpenAI, Ollama")
 
-    def test_explicit_initial_prompt_overrides_auto_glossary_terms(self) -> None:
+    def test_transcribe_does_not_set_best_of_when_temperature_is_zero(self) -> None:
         init_calls: list[tuple[str, str, str]] = []
         fake_model = _FakeModel(
             init_calls,
-            segments=[_FakeSegment("Docker deploy", 0.0, 1.0)],
-            info=SimpleNamespace(language="ru", duration=1.0),
+            segments=[_FakeSegment("Привет", 0.0, 0.5)],
         )
 
         class _FakeWhisperModel:
@@ -341,25 +331,27 @@ class TranscriberTests(unittest.TestCase):
                 return fake_model.transcribe(audio_path, **kwargs)
 
         fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+        fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
 
-        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
+        with patch.dict(
+            "sys.modules",
+            {"faster_whisper": fake_faster_whisper, "torch": fake_torch},
+        ):
             transcriber = Transcriber(
                 model_name="large-v3",
-                device="cpu",
-                language="ru",
-                initial_prompt="Custom prompt",
-                terms=("Docker", "GitHub"),
+                device="auto",
+                best_of=9,
+                temperature=0.0,
             )
-            transcriber.transcribe(Path("glossary-demo.m4a"))
+            transcriber.transcribe(Path("demo.m4a"))
 
-        self.assertEqual(fake_model.calls[0]["initial_prompt"], "Custom prompt")
+        self.assertNotIn("best_of", fake_model.calls[0])
 
-    def test_transcribe_uses_best_of_for_nonzero_temperature(self) -> None:
+    def test_transcribe_sets_best_of_when_temperature_is_non_zero(self) -> None:
         init_calls: list[tuple[str, str, str]] = []
         fake_model = _FakeModel(
             init_calls,
-            segments=[_FakeSegment("qa check", 0.0, 1.0)],
-            info=SimpleNamespace(language="ru", duration=1.0),
+            segments=[_FakeSegment("Привет", 0.0, 0.5)],
         )
 
         class _FakeWhisperModel:
@@ -370,28 +362,32 @@ class TranscriberTests(unittest.TestCase):
                 return fake_model.transcribe(audio_path, **kwargs)
 
         fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+        fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
 
-        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
+        with patch.dict(
+            "sys.modules",
+            {"faster_whisper": fake_faster_whisper, "torch": fake_torch},
+        ):
             transcriber = Transcriber(
                 model_name="large-v3",
-                device="cpu",
-                language="ru",
-                beam_size=7,
-                best_of=6,
+                device="auto",
+                best_of=9,
                 temperature=0.2,
             )
-            transcriber.transcribe(Path("sampling-demo.m4a"))
+            transcriber.transcribe(Path("demo.m4a"))
 
-        self.assertEqual(fake_model.calls[0]["best_of"], 6)
-        self.assertEqual(fake_model.calls[0]["temperature"], 0.2)
-        self.assertEqual(fake_model.calls[0]["beam_size"], 7)
+        self.assertEqual(fake_model.calls[0]["best_of"], 9)
 
-    def test_transcribe_raises_on_empty_transcript(self) -> None:
+    def test_transcribe_reports_progress_during_whisper_processing(self) -> None:
         init_calls: list[tuple[str, str, str]] = []
         fake_model = _FakeModel(
             init_calls,
-            segments=[_FakeSegment("   ", None, None)],
-            info=SimpleNamespace(language="ru", duration=None),
+            info=SimpleNamespace(language="ru", duration=300.0),
+            segments=[
+                _FakeSegment("один", 0.0, 60.0),
+                _FakeSegment("два", 60.0, 150.0),
+                _FakeSegment("три", 150.0, 299.0),
+            ],
         )
 
         class _FakeWhisperModel:
@@ -402,33 +398,14 @@ class TranscriberTests(unittest.TestCase):
                 return fake_model.transcribe(audio_path, **kwargs)
 
         fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
-
-        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
-            transcriber = Transcriber(model_name="large-v3", device="cpu")
-
-        with self.assertRaisesRegex(RuntimeError, "empty"):
-            transcriber.transcribe(Path("empty.m4a"))
-
-    def test_transcribe_reports_progress_stages(self) -> None:
-        init_calls: list[tuple[str, str, str]] = []
-        fake_model = _FakeModel(
-            init_calls,
-            segments=[_FakeSegment("тест", 0.0, 1.0)],
-            info=SimpleNamespace(language="ru", duration=1.0),
-        )
-
-        class _FakeWhisperModel:
-            def __init__(self, name: str, device: str, compute_type: str) -> None:
-                init_calls.append((name, device, compute_type))
-
-            def transcribe(self, audio_path: str, **kwargs: object):
-                return fake_model.transcribe(audio_path, **kwargs)
-
-        fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+        fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
         progress_events: list[tuple[str, int, str]] = []
 
-        with patch.dict("sys.modules", {"faster_whisper": fake_faster_whisper}):
-            transcriber = Transcriber(model_name="large-v3", device="cpu")
+        with patch.dict(
+            "sys.modules",
+            {"faster_whisper": fake_faster_whisper, "torch": fake_torch},
+        ):
+            transcriber = Transcriber(model_name="large-v3", device="auto")
             transcriber.transcribe(
                 Path("demo.m4a"),
                 progress_callback=lambda stage, percent, message: progress_events.append(
@@ -436,14 +413,136 @@ class TranscriberTests(unittest.TestCase):
                 ),
             )
 
-        self.assertEqual(
-            progress_events,
-            [
-                ("transcribing", 20, "Transcribing audio with faster-whisper."),
-                ("transcription_complete", 55, "Collected 1 transcript segments."),
-                ("diarization_skipped", 75, "Diarization disabled."),
+        progress_stages = [event[0] for event in progress_events]
+        self.assertIn("transcribing", progress_stages)
+        self.assertIn("transcribing_progress", progress_stages)
+        self.assertIn("transcription_complete", progress_stages)
+        self.assertIn("diarizing", progress_stages)
+        self.assertIn("diarization_complete", progress_stages)
+        transcribing_progress = [event for event in progress_events if event[0] == "transcribing_progress"]
+        self.assertTrue(transcribing_progress)
+        self.assertEqual(transcribing_progress[-1][1], 54)
+
+    def test_transcribe_reports_fallback_progress_when_duration_is_unknown(self) -> None:
+        init_calls: list[tuple[str, str, str]] = []
+        fake_model = _FakeModel(
+            init_calls,
+            info=SimpleNamespace(language="ru", duration=None),
+            segments=[_FakeSegment(f"сегмент {index}", index, index + 1.0) for index in range(26)],
+        )
+
+        class _FakeWhisperModel:
+            def __init__(self, name: str, device: str, compute_type: str) -> None:
+                init_calls.append((name, device, compute_type))
+
+            def transcribe(self, audio_path: str, **kwargs: object):
+                return fake_model.transcribe(audio_path, **kwargs)
+
+        fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+        fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
+        progress_events: list[tuple[str, int, str]] = []
+
+        with patch.dict(
+            "sys.modules",
+            {"faster_whisper": fake_faster_whisper, "torch": fake_torch},
+        ):
+            transcriber = Transcriber(model_name="large-v3", device="auto")
+            transcriber.transcribe(
+                Path("demo.m4a"),
+                progress_callback=lambda stage, percent, message: progress_events.append(
+                    (stage, percent, message)
+                ),
+            )
+
+        transcribing_progress = [event for event in progress_events if event[0] == "transcribing_progress"]
+        self.assertEqual(len(transcribing_progress), 1)
+        self.assertEqual(transcribing_progress[0][1], 23)
+        self.assertIn("25 transcript segments", transcribing_progress[0][2])
+
+    def test_transcribe_falls_back_to_utterance_duration_when_info_has_none(self) -> None:
+        init_calls: list[tuple[str, str, str]] = []
+        fake_model = _FakeModel(
+            init_calls,
+            info=SimpleNamespace(language="ru", duration=None),
+            segments=[
+                _FakeSegment("один", 0.0, 1.25),
+                _FakeSegment("два", 1.25, 3.0),
             ],
         )
+
+        class _FakeWhisperModel:
+            def __init__(self, name: str, device: str, compute_type: str) -> None:
+                init_calls.append((name, device, compute_type))
+
+            def transcribe(self, audio_path: str, **kwargs: object):
+                return fake_model.transcribe(audio_path, **kwargs)
+
+        fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+        fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
+
+        with patch.dict(
+            "sys.modules",
+            {"faster_whisper": fake_faster_whisper, "torch": fake_torch},
+        ):
+            transcriber = Transcriber(model_name="large-v3", device="auto")
+            result = transcriber.transcribe(Path("demo.m4a"))
+
+        self.assertEqual(result.duration_seconds, 3.0)
+
+    def test_transcribe_raises_for_empty_transcript(self) -> None:
+        init_calls: list[tuple[str, str, str]] = []
+        fake_model = _FakeModel(
+            init_calls,
+            segments=[_FakeSegment("   ", 0.0, 1.0)],
+        )
+
+        class _FakeWhisperModel:
+            def __init__(self, name: str, device: str, compute_type: str) -> None:
+                init_calls.append((name, device, compute_type))
+
+            def transcribe(self, audio_path: str, **kwargs: object):
+                return fake_model.transcribe(audio_path, **kwargs)
+
+        fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+        fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
+
+        with patch.dict(
+            "sys.modules",
+            {"faster_whisper": fake_faster_whisper, "torch": fake_torch},
+        ):
+            transcriber = Transcriber(model_name="large-v3", device="auto")
+            with self.assertRaisesRegex(RuntimeError, "is empty"):
+                transcriber.transcribe(Path("demo.m4a"))
+
+    def test_transcribe_raises_when_diarization_fails(self) -> None:
+        init_calls: list[tuple[str, str, str]] = []
+        fake_model = _FakeModel(
+            init_calls,
+            segments=[_FakeSegment("Привет", 0.0, 1.0)],
+        )
+
+        class _FakeWhisperModel:
+            def __init__(self, name: str, device: str, compute_type: str) -> None:
+                init_calls.append((name, device, compute_type))
+
+            def transcribe(self, audio_path: str, **kwargs: object):
+                return fake_model.transcribe(audio_path, **kwargs)
+
+        fake_faster_whisper = SimpleNamespace(WhisperModel=_FakeWhisperModel)
+        fake_torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
+        failing_diarizer = _FakeDiarizer(error=RuntimeError("boom"))
+
+        with patch.dict(
+            "sys.modules",
+            {"faster_whisper": fake_faster_whisper, "torch": fake_torch},
+        ):
+            with patch(
+                "meeting_summary.transcriber._create_diarization_support",
+                return_value=(failing_diarizer, lambda utterances, _: utterances, RuntimeError),
+            ):
+                transcriber = Transcriber(model_name="large-v3", device="auto")
+                with self.assertRaisesRegex(RuntimeError, "Diarization failed for demo.m4a"):
+                    transcriber.transcribe(Path("demo.m4a"))
 
 
 if __name__ == "__main__":

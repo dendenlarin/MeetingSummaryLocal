@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tomllib
 import unittest
 from pathlib import Path
@@ -14,36 +15,46 @@ class ProjectFilesTests(unittest.TestCase):
 
         self.assertIn("tasks/", gitignore)
 
-    def test_docker_compose_mounts_prompt_directory(self) -> None:
-        docker_compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    def test_docker_files_are_removed(self) -> None:
+        self.assertFalse((PROJECT_ROOT / "Dockerfile").exists())
+        self.assertFalse((PROJECT_ROOT / "docker-compose.yml").exists())
+        self.assertFalse((PROJECT_ROOT / "constraints-docker.txt").exists())
+        self.assertFalse((PROJECT_ROOT / ".dockerignore").exists())
 
-        self.assertIn("./meeting_summary/prompts:/app/runtime-prompts:ro", docker_compose)
-        self.assertNotIn(
-            "./meeting_summary/prompts/summary.md:/app/runtime-prompts/summary.md:ro",
-            docker_compose,
-        )
+    def test_env_example_uses_native_safe_defaults(self) -> None:
+        env_example = (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
 
-    def test_docker_compose_exposes_duplicate_cooldown_env(self) -> None:
-        docker_compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("OLLAMA_PROMPT_PATH=./meeting_summary/prompts/summary.md", env_example)
+        self.assertIn("WHISPER_MODEL=medium", env_example)
+        self.assertIn("WHISPER_COMPUTE_TYPE=auto", env_example)
+        self.assertIn("HF_TOKEN=", env_example)
+        self.assertNotIn("ENABLE_DIARIZATION", env_example)
 
-        self.assertIn(
-            'FILE_DUPLICATE_COOLDOWN_SECONDS: "${FILE_DUPLICATE_COOLDOWN_SECONDS:-120}"',
-            docker_compose,
-        )
-
-    def test_pyannote_is_optional_dependency(self) -> None:
+    def test_pyannote_is_required_dependency(self) -> None:
         pyproject = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
         dependencies = pyproject["project"]["dependencies"]
-        optional_dependencies = pyproject["project"]["optional-dependencies"]["diarization"]
 
-        self.assertFalse(any(dep.startswith("pyannote.audio") for dep in dependencies))
-        self.assertTrue(any(dep.startswith("pyannote.audio") for dep in optional_dependencies))
+        self.assertEqual(pyproject["project"]["requires-python"], ">=3.11,<3.14")
+        self.assertIn("pyannote.audio==4.0.4", dependencies)
+        self.assertNotIn("optional-dependencies", pyproject)
 
-    def test_dockerfile_installs_diarization_extra(self) -> None:
-        dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    def test_readme_documents_native_only_flow(self) -> None:
+        readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
-        self.assertIn('pip install --constraint constraints-docker.txt ".[diarization]"', dockerfile)
+        self.assertIn("./run", readme)
+        self.assertIn("diarization всегда включён", readme.lower())
+        self.assertIn("только нативный macOS runtime", readme)
+        self.assertIn("speaker-diarization-community-1", readme)
+        self.assertIn("python3.13", readme)
+        self.assertNotIn("docker compose", readme.lower())
+        self.assertNotIn("ffmpeg", readme.lower())
+
+    def test_run_script_exists_and_is_executable(self) -> None:
+        run_script = PROJECT_ROOT / "run"
+
+        self.assertTrue(run_script.exists())
+        self.assertTrue(os.access(run_script, os.X_OK))
 
 
 if __name__ == "__main__":

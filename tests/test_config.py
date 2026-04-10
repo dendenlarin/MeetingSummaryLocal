@@ -57,34 +57,11 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.ollama_prompt_path, custom_prompt_path.resolve())
 
-    def test_empty_enable_diarization_is_treated_as_disabled(self) -> None:
-        with patch.dict(os.environ, {"ENABLE_DIARIZATION": ""}, clear=True):
-            settings = Settings.load(base_dir=self.base_dir)
-
-        self.assertFalse(settings.enable_diarization)
-
-    def test_load_prefers_whisper_model_over_legacy_model_size(self) -> None:
-        with patch.dict(
-            os.environ,
-            {"WHISPER_MODEL": "medium", "WHISPER_MODEL_SIZE": "small"},
-            clear=True,
-        ):
-            settings = Settings.load(base_dir=self.base_dir)
-
-        self.assertEqual(settings.whisper_model, "medium")
-
-    def test_load_uses_legacy_whisper_model_size_as_fallback(self) -> None:
-        with patch.dict(os.environ, {"WHISPER_MODEL_SIZE": "small"}, clear=True):
-            settings = Settings.load(base_dir=self.base_dir)
-
-        self.assertEqual(settings.whisper_model, "small")
-        self.assertEqual(settings.whisper_compute_type, "auto")
-
-    def test_load_applies_quality_first_whisper_defaults(self) -> None:
+    def test_load_applies_balanced_native_whisper_defaults(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             settings = Settings.load(base_dir=self.base_dir)
 
-        self.assertEqual(settings.whisper_model, "large-v3")
+        self.assertEqual(settings.whisper_model, "medium")
         self.assertEqual(settings.whisper_compute_type, "auto")
         self.assertIsNone(settings.whisper_language)
         self.assertIsNone(settings.whisper_initial_prompt)
@@ -119,12 +96,6 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.whisper_best_of, 6)
         self.assertEqual(settings.whisper_temperature, 0.2)
         self.assertFalse(settings.whisper_vad_filter)
-
-    def test_true_enable_diarization_is_treated_as_enabled(self) -> None:
-        with patch.dict(os.environ, {"ENABLE_DIARIZATION": "true"}, clear=True):
-            settings = Settings.load(base_dir=self.base_dir)
-
-        self.assertTrue(settings.enable_diarization)
 
     def test_empty_initial_scan_is_treated_as_disabled(self) -> None:
         with patch.dict(os.environ, {"INITIAL_SCAN": ""}, clear=True):

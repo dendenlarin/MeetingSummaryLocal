@@ -1,0 +1,48 @@
+#!/bin/zsh
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+VENV_DIR="$ROOT_DIR/.venv"
+PYTHON_BIN="$VENV_DIR/bin/python"
+PIP_BIN="$VENV_DIR/bin/pip"
+APP_BIN="$VENV_DIR/bin/meeting-summary"
+
+find_python() {
+  local candidate
+  for candidate in python3.13 python3.12 python3.11 python3; do
+    if ! command -v "$candidate" >/dev/null 2>&1; then
+      continue
+    fi
+
+    if "$candidate" -c 'import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] < (3, 14) else 1)'; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  if ! PYTHON_CMD="$(find_python)"; then
+    echo "Нужен Python 3.11, 3.12 или 3.13. Самый простой путь: brew install python@3.13" >&2
+    exit 1
+  fi
+
+  "$PYTHON_CMD" -m venv "$VENV_DIR"
+fi
+
+if ! "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] < (3, 14) else 1)'; then
+  echo "Текущий .venv создан на неподдерживаемом Python. Удали .venv и снова запусти ./run после установки Python 3.13." >&2
+  exit 1
+fi
+
+if [[ ! -f "$ROOT_DIR/.env" ]]; then
+  cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
+fi
+
+if ! "$PYTHON_BIN" -c "import meeting_summary, pyannote.audio" >/dev/null 2>&1; then
+  "$PIP_BIN" install -e "$ROOT_DIR"
+fi
+
+exec "$APP_BIN"
