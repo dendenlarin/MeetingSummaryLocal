@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 import logging
 from pathlib import Path
@@ -39,6 +40,10 @@ class CallWatcher(FileSystemEventHandler):
         self._active: set[Path] = set()
         self._recent_attempts: dict[Path, _RecentAttempt] = {}
         self._lock = threading.Lock()
+        self._executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="call-watcher",
+        )
 
     def process_existing(self) -> None:
         for audio_path in sorted(self.calls_dir.glob("*.m4a")):
@@ -68,6 +73,7 @@ class CallWatcher(FileSystemEventHandler):
         finally:
             observer.stop()
             observer.join()
+            self._executor.shutdown(wait=True)
 
     def _schedule(self, audio_path: Path, reason: str) -> None:
         if audio_path.suffix.lower() != ".m4a":
@@ -84,12 +90,12 @@ class CallWatcher(FileSystemEventHandler):
                 return
             self._active.add(audio_path)
 
-        thread = threading.Thread(
-            target=self._process_when_ready,
-            args=(audio_path, reason),
-            daemon=True,
-        )
-        thread.start()
+        try:
+            self._executor.submit(self._process_when_ready, audio_path, reason)
+        except Exception:
+            with self._lock:
+                self._active.discard(audio_path)
+            raise
 
     def _process_when_ready(self, audio_path: Path, reason: str) -> None:
         audio_path = audio_path.resolve()
