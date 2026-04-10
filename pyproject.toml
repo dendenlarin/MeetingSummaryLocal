@@ -3,18 +3,14 @@ name = "meeting-summary"
 version = "0.1.0"
 description = "Watch local call recordings, transcribe with faster-whisper, and summarize with Ollama."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
   "faster-whisper>=1.1.1",
   "huggingface-hub<1",
+  "pyannote.audio==4.0.4",
   "python-dotenv>=1.1.0",
   "requests>=2.32.3",
   "watchdog>=6.0.0",
-]
-
-[project.optional-dependencies]
-diarization = [
-  "pyannote.audio>=3.4,<5",
 ]
 
 [project.scripts]

@@ -22,7 +22,8 @@ class _FakeTranscriber:
                 "Processed 5.0 / 15.0 min of audio.",
             )
             progress_callback("transcription_complete", 55, "Collected 1 transcript segments.")
-            progress_callback("diarization_skipped", 75, "Diarization disabled.")
+            progress_callback("diarizing", 60, "Running speaker diarization.")
+            progress_callback("diarization_complete", 75, "Diarization finished with 2 speakers.")
 
         return TranscriptionResult(
             source_path=audio_path,
@@ -58,7 +59,8 @@ class ProcessorTests(unittest.TestCase):
                 ("demo.m4a", 20, "transcribing", "Transcribing audio with faster-whisper."),
                 ("demo.m4a", 32, "transcribing_progress", "Processed 5.0 / 15.0 min of audio."),
                 ("demo.m4a", 55, "transcription_complete", "Collected 1 transcript segments."),
-                ("demo.m4a", 75, "diarization_skipped", "Diarization disabled."),
+                ("demo.m4a", 60, "diarizing", "Running speaker diarization."),
+                ("demo.m4a", 75, "diarization_complete", "Diarization finished with 2 speakers."),
                 ("demo.m4a", 85, "summarizing", "Generating summary with Ollama."),
                 ("demo.m4a", 95, "writing_output", "Writing markdown output."),
                 ("demo.m4a", 100, "completed", "Saved markdown to demo.md."),

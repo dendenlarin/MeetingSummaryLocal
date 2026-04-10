@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+import sys
 
 from meeting_summary.config import Settings
 from meeting_summary.logging_utils import configure_logging
@@ -13,16 +14,28 @@ from meeting_summary.watcher import CallWatcher
 LOGGER = logging.getLogger(__name__)
 
 
+def _ensure_supported_python() -> None:
+    if sys.version_info < (3, 11) or sys.version_info >= (3, 14):
+        version = f"{sys.version_info[0]}.{sys.version_info[1]}"
+        LOGGER.error(
+            "Unsupported Python %s. Use Python 3.11, 3.12, or 3.13 for this project.",
+            version,
+        )
+        raise SystemExit(1)
+
+
 def main() -> None:
     configure_logging()
+    _ensure_supported_python()
     settings = Settings.load(base_dir=Path.cwd())
     settings.calls_dir.mkdir(parents=True, exist_ok=True)
+    LOGGER.info("Using Ollama prompt template from %s.", settings.ollama_prompt_path)
 
     if settings.whisper_vad_filter:
         LOGGER.info(
-            "WHISPER_VAD_FILTER is enabled. Some Docker/VM environments may print a native "
-            "ONNXRuntime CPU vendor warning during VAD initialization. This warning comes from "
-            "the VAD runtime itself and does not restart or invalidate transcription."
+            "WHISPER_VAD_FILTER is enabled. The first transcription progress heartbeat may appear "
+            "only after faster-whisper yields segments, so a file can stay at 20%% for a while "
+            "without being stuck or restarted."
         )
 
     try:
@@ -37,7 +50,6 @@ def main() -> None:
             best_of=settings.whisper_best_of,
             temperature=settings.whisper_temperature,
             vad_filter=settings.whisper_vad_filter,
-            enable_diarization=settings.enable_diarization,
             diarization_auth_token=settings.hf_token,
             diarization_device=settings.pyannote_device,
         )

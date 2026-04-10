@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from meeting_summary.diarization import (
+    DEFAULT_PYANNOTE_MODEL,
     DiarizationSkipped,
     PyannoteDiarizer,
     SpeakerTurn,
@@ -136,20 +137,41 @@ class DiarizationTests(unittest.TestCase):
     def test_load_pipeline_supports_v3_use_auth_token_signature(self) -> None:
         pipeline = _load_pipeline(
             pipeline_cls=_FakePipelineV3,
-            model_name="pyannote/speaker-diarization-3.1",
+            model_name=DEFAULT_PYANNOTE_MODEL,
             auth_token="hf_test",
         )
 
-        self.assertEqual(pipeline, ("pyannote/speaker-diarization-3.1", "hf_test"))
+        self.assertEqual(pipeline, (DEFAULT_PYANNOTE_MODEL, "hf_test"))
 
     def test_load_pipeline_supports_v4_token_signature(self) -> None:
         pipeline = _load_pipeline(
             pipeline_cls=_FakePipelineV4,
-            model_name="pyannote/speaker-diarization-community-1",
+            model_name=DEFAULT_PYANNOTE_MODEL,
             auth_token="hf_test",
         )
 
-        self.assertEqual(pipeline, ("pyannote/speaker-diarization-community-1", "hf_test"))
+        self.assertEqual(pipeline, (DEFAULT_PYANNOTE_MODEL, "hf_test"))
+
+    def test_load_pipeline_requires_auth_token(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "HF_TOKEN is required"):
+            _load_pipeline(
+                pipeline_cls=_FakePipelineV4,
+                model_name=DEFAULT_PYANNOTE_MODEL,
+                auth_token=None,
+            )
+
+    def test_load_pipeline_wraps_hugging_face_access_error(self) -> None:
+        class _BrokenPipeline:
+            @classmethod
+            def from_pretrained(cls, checkpoint, token=None):  # noqa: ANN001
+                raise RuntimeError(f"403 for {checkpoint}")
+
+        with self.assertRaisesRegex(RuntimeError, "Could not load"):
+            _load_pipeline(
+                pipeline_cls=_BrokenPipeline,
+                model_name=DEFAULT_PYANNOTE_MODEL,
+                auth_token="hf_test",
+            )
 
     def test_load_audio_uses_torchaudio_when_available(self) -> None:
         expected_waveform = object()
