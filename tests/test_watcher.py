@@ -58,6 +58,29 @@ class CallWatcherTests(unittest.TestCase):
             ],
         )
 
+    def test_schedule_submits_work_to_executor(self) -> None:
+        processor = Mock()
+        watcher = CallWatcher(
+            calls_dir=self.calls_dir,
+            processor=processor,
+            ready_checks=0,
+            ready_interval_seconds=0,
+            duplicate_cooldown_seconds=120,
+        )
+
+        executor_mock = Mock()
+        watcher._executor = executor_mock
+        audio_path = self.calls_dir / "queued.m4a"
+
+        watcher._schedule(audio_path, reason="created")
+
+        executor_mock.submit.assert_called_once_with(
+            watcher._process_when_ready,
+            audio_path.resolve(),
+            "created",
+        )
+        self.assertEqual(watcher._active, {audio_path.resolve()})
+
     def test_process_when_ready_suppresses_recent_duplicate_fingerprint(self) -> None:
         audio_path = self.calls_dir / "demo.m4a"
         audio_path.write_bytes(b"audio")
@@ -177,3 +200,28 @@ class CallWatcherTests(unittest.TestCase):
         watcher._process_when_ready(audio_path, reason="moved")
 
         self.assertEqual(processor.process.call_count, 2)
+
+    def test_serve_forever_shuts_down_executor_on_stop(self) -> None:
+        processor = Mock()
+        watcher = CallWatcher(
+            calls_dir=self.calls_dir,
+            processor=processor,
+            ready_checks=0,
+            ready_interval_seconds=0,
+            duplicate_cooldown_seconds=120,
+        )
+
+        observer_mock = Mock()
+        watcher._executor = Mock()
+
+        with patch("meeting_summary.watcher.Observer", return_value=observer_mock), patch(
+            "meeting_summary.watcher.time.sleep",
+            side_effect=KeyboardInterrupt,
+        ):
+            watcher.serve_forever()
+
+        observer_mock.schedule.assert_called_once_with(watcher, str(self.calls_dir), recursive=False)
+        observer_mock.start.assert_called_once_with()
+        observer_mock.stop.assert_called_once_with()
+        observer_mock.join.assert_called_once_with()
+        watcher._executor.shutdown.assert_called_once_with(wait=True)
